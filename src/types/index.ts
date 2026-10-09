@@ -2,17 +2,17 @@ export interface DailyTask {
   id: string;
   title: string;
   isCompleted: boolean;
-  lastCompletedDate: string | null; // ISO Date string (YYYY-MM-DD)
+  lastCompletedDate: string | null; // YYYY-MM-DD
 }
 
 export interface TodoItem {
   id: string;
   title: string;
   isCompleted: boolean;
-  createdAt: string; // ISO Date string
+  createdAt: number; // Unix timestamp
 }
 
 export interface Note {
   content: string;
-  lastEdited: string; // ISO Date string
+  lastEdited: string | null; // ISO Date string
 }

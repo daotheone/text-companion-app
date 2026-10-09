@@ -1,0 +1,255 @@
+:root {
+  --bg-color: #fcfbf9;
+  --text-main: #1a1a1a;
+  --text-muted: #767676;
+  --border-color: #e5e5df;
+  --hover-color: #2b2b2b;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  font-family: Georgia, serif;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+input, button, textarea {
+  font-family: monospace, SFMono-Regular, Consolas, sans-serif;
+  font-size: 0.95rem;
+}
+
+.app-container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem 1.5rem;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+/* Header & Notes Button */
+header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-bottom: 3rem;
+}
+
+.text-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 0.9rem;
+  letter-spacing: 0.05em;
+  padding: 0.25rem 0.5rem;
+  transition: color 0.15s ease;
+}
+
+.text-btn:hover {
+  color: var(--text-main);
+  text-decoration: underline;
+}
+
+/* Companion Section */
+.companion-section {
+  margin-bottom: 4rem;
+  padding: 2rem 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.companion-prompt {
+  font-size: 1.6rem;
+  font-weight: normal;
+  margin-bottom: 1.25rem;
+  letter-spacing: -0.01em;
+}
+
+.companion-actions {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+.action-link {
+  background: none;
+  border: none;
+  color: var(--text-main);
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 0.95rem;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  padding: 0;
+}
+
+.action-link:hover {
+  color: var(--text-muted);
+}
+
+/* Lists Section */
+.lists-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+}
+
+@media (max-width: 640px) {
+  .lists-grid {
+    grid-template-columns: 1fr;
+    gap: 2.5rem;
+  }
+}
+
+.list-column h2 {
+  font-size: 1.1rem;
+  font-weight: normal;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.list-items {
+  list-style: none;
+  margin-bottom: 1rem;
+}
+
+.list-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  border-bottom: 1px dashed var(--border-color);
+  font-size: 1rem;
+}
+
+.list-item.completed span {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.item-content {
+  display: flex;
+  align-items: center;
+  gap: 0.75rfr;
+  cursor: pointer;
+  flex: 1;
+  word-break: break-word;
+}
+
+.item-checkbox {
+  cursor: pointer;
+  accent-color: var(--text-main);
+}
+
+.delete-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 0.8rem;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  padding: 0 0.25rem;
+}
+
+.list-item:hover .delete-btn {
+  opacity: 1;
+}
+
+.delete-btn:hover {
+  color: #c53030;
+}
+
+/* Add Input Form */
+.add-form {
+  margin-top: 0.75rem;
+}
+
+.add-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--text-main);
+  padding: 0.35rem 0;
+  color: var(--text-main);
+  outline: none;
+}
+
+.add-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+/* Floating Notes Modal */
+.notes-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: var(--bg-color);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  padding: 3rem;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.notes-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  max-width: 800px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.notes-title {
+  font-family: monospace;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.notes-textarea {
+  flex: 1;
+  max-width: 800px;
+  width: 100%;
+  margin: 0 auto;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: Georgia, serif;
+  font-size: 1.15rem;
+  line-height: 1.8;
+  color: var(--text-main);
+  resize: none;
+}
+
+.notes-textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
+}

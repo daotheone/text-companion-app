@@ -27,6 +27,7 @@ export default function App() {
   const draft = useRef({ date: today, content: '', dirty: false });
   const [allNotes, setAllNotes] = useState(false);
   const [adding, setAdding] = useState(false);
+  const addId = useRef('');
   const [addTitle, setAddTitle] = useState('');
   const [addType, setAddType] = useState<'todo' | 'habit'>('todo');
   const [addDate, setAddDate] = useState(today);
@@ -142,22 +143,26 @@ export default function App() {
       : { ...current.current, todos: current.current.todos.filter(todo => todo.id !== id) };
     if (commit(next)) setEditing(null);
   };
-  const add = (title: string, type: 'habit' | 'todo', date = formatDate(new Date())) => {
+  const add = (title: string, type: 'habit' | 'todo', date = formatDate(new Date()), id: string = crypto.randomUUID()) => {
     if (!title.trim()) return false;
-    const id = crypto.randomUUID();
     const next = type === 'habit'
-      ? { ...current.current, dailyTasks: [...current.current.dailyTasks, { id, title: title.trim(), isCompleted: false, lastCompletedDate: null, completionHistory: [] }] }
-      : { ...current.current, todos: [...current.current.todos, { id, title: title.trim(), isCompleted: false, createdAt: parseDate(date).getTime() }] };
+      ? { ...current.current, dailyTasks: [...current.current.dailyTasks.filter(task => task.id !== id), { id, title: title.trim(), isCompleted: false, lastCompletedDate: null, completionHistory: [] }] }
+      : { ...current.current, todos: [...current.current.todos.filter(todo => todo.id !== id), { id, title: title.trim(), isCompleted: false, createdAt: parseDate(date).getTime() }] };
     return commit(next);
   };
   const openAdd = (date: string) => {
+    addId.current = crypto.randomUUID();
     setAddTitle(''); setAddType('todo'); setAddDate(date); setFormError(''); setAdding(true);
   };
   const submitAdd = (event: FormEvent) => {
     event.preventDefault();
     if (!addTitle.trim()) { setFormError('Enter a title.'); return; }
     try {
-      if (add(addTitle, addType, addDate)) { setAdding(false); setAddTitle(''); }
+      const base = { ...current.current, dailyTasks: current.current.dailyTasks.filter(task => task.id !== addId.current), todos: current.current.todos.filter(todo => todo.id !== addId.current) };
+      current.current = base;
+      const saved = add(addTitle, addType, addDate, addId.current);
+      if (saved) { setAdding(false); setAddTitle(''); }
+      else setFormError('Could not save. Your item is retained; press Add to retry.');
     } catch { setFormError('Choose a valid date.'); }
   };
   const changeNoteDate = (date: string) => {

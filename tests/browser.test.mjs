@@ -143,6 +143,35 @@ try {
   await page.reload();
   await page.getByLabel('Note date', { exact: true }).fill(oldDate);
   assert.equal(await page.getByLabel('Daily note', { exact: true }).inputValue(), 'Unsaved note must survive');
+  await page.getByRole('button', { name: 'Add item', exact: true }).click();
+  await dialog.getByLabel('Title').fill('Retry add once');
+  await page.evaluate(() => {
+    window.originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key, value) {
+      if (key === 'text-companion-todo-items') throw new DOMException('Quota reached', 'QuotaExceededError');
+      return window.originalSetItem.call(this, key, value);
+    };
+  });
+  await dialog.getByRole('button', { name: '[Add]', exact: true }).click();
+  assert.match(await dialog.getByRole('alert').textContent(), /Could not save/);
+  assert.equal(await dialog.getByLabel('Title').inputValue(), 'Retry add once');
+  await page.evaluate(() => { Storage.prototype.setItem = window.originalSetItem; });
+  await dialog.getByRole('button', { name: '[Add]', exact: true }).click();
+  assert.equal(await page.getByRole('checkbox', { name: 'Retry add once', exact: true }).count(), 1);
+  await page.clock.install({ time: new Date('2024-02-29T23:59:59-08:00') });
+  await page.reload();
+  await page.getByRole('button', { name: 'Add item', exact: true }).click();
+  await dialog.getByLabel('Title').fill('Midnight habit');
+  await dialog.getByLabel('Type', { exact: true }).selectOption('habit');
+  await dialog.getByRole('button', { name: '[Add]', exact: true }).click();
+  const midnightHabit = page.getByRole('checkbox', { name: 'Midnight habit', exact: true });
+  await midnightHabit.check();
+  await page.clock.runFor(1500);
+  assert.equal(await midnightHabit.isChecked(), false);
+  await page.getByRole('button', { name: 'Today', exact: true }).click();
+  assert.match(await page.locator('button[aria-current="date"]').getAttribute('aria-label'), /March 1, 2024/);
+  await page.getByRole('button', { name: /Thursday, February 29, 2024/ }).click();
+  assert.equal(await panel.getByText('Midnight habit', { exact: true }).count(), 1);
   assert.deepEqual(errors, []);
   if (process.env.SCREENSHOT_PATH) await page.screenshot({ path: process.env.SCREENSHOT_PATH, fullPage: true });
   console.log('Browser: keyboard/dialog focus, habit undo, edit/delete, daily notes, reload, month/week passed.');

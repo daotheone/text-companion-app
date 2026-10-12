@@ -1,361 +1,290 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import type { DailyTask, TodoItem } from './types';
-import { STORAGE_KEYS } from './data/storageKeys';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { addDays, addMonths, addWeeks, format, startOfMonth } from 'date-fns';
+import type { AppData, DailyTask, TodoItem } from './types';
+import { loadData, resetDailyTasks, saveData, toggleHabit } from './data/storage';
+import { formatDate, getMonthGrid, getWeekGrid, parseDate } from './utils/calendar';
+import Modal from './components/Modal';
 
-const GREETINGS = ["Hello", "Hi there", "Good to see you", "Welcome back"];
-
-const DEFAULT_DAILY_TASKS: DailyTask[] = [
-  { id: '1', title: 'Drink water', isCompleted: false, lastCompletedDate: '' },
-  { id: '2', title: 'Read 10 pages', isCompleted: false, lastCompletedDate: '' },
-  { id: '3', title: 'Stretch for 10 minutes', isCompleted: false, lastCompletedDate: '' },
-];
+const GREETINGS = ['Hello', 'Hi there', 'Good to see you', 'Welcome back'];
+const randomGreeting = () => GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
+const emptyData = (): AppData => ({ dailyTasks: [], todos: [], notes: {} });
 
 export default function App() {
-  const getTodayString = () => new Date().toISOString().split('T')[0];
+  const [data, setData] = useState<AppData>(emptyData);
+  const current = useRef(data);
+  const pending = useRef<AppData | null>(null);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState('');
+  const [today, setToday] = useState(() => formatDate(new Date()));
+  const [cursor, setCursor] = useState(() => new Date());
+  const [view, setView] = useState<'month' | 'week'>('month');
+  const [selected, setSelected] = useState<string | null>(null);
+  const panelClose = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (selected) panelClose.current?.focus(); }, [selected]);
+  const dayTrigger = useRef<HTMLButtonElement | null>(null);
+  const [noteDate, setNoteDate] = useState(today);
+  const [noteDraft, setNoteDraft] = useState('');
+  const draft = useRef({ date: today, content: '', dirty: false });
+  const [allNotes, setAllNotes] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [addTitle, setAddTitle] = useState('');
+  const [addType, setAddType] = useState<'todo' | 'habit'>('todo');
+  const [addDate, setAddDate] = useState(today);
+  const [formError, setFormError] = useState('');
+  const [habitTitle, setHabitTitle] = useState('');
+  const [todoTitle, setTodoTitle] = useState('');
+  const [greeting, setGreeting] = useState(randomGreeting);
+  const [cycle, setCycle] = useState(0);
+  const [editing, setEditing] = useState<{ type: 'habit' | 'todo'; id: string } | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editError, setEditError] = useState('');
 
-  // 1. Initialize State with Midnight Reset logic
-  const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() => {
+  const showError = (cause: unknown) => setError(`${cause instanceof Error ? cause.message : 'Storage unavailable'}. Changes not saved; keep this tab open and retry.`);
+  const commit = (next: AppData) => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.DAILY_TASKS);
-      if (saved) {
-        const parsed: DailyTask[] = JSON.parse(saved);
-        const today = getTodayString();
-        // Midnight reset: if lastCompletedDate < today, reset isCompleted to false
-        return parsed.map(task => ({
-          ...task,
-          isCompleted: task.lastCompletedDate === today ? task.isCompleted : false,
-        }));
+      saveData(window.localStorage, next);
+      current.current = next;
+      pending.current = null;
+      setData(next);
+      if (!draft.current.dirty) setError('');
+      return true;
+    } catch (cause) {
+      pending.current = next;
+      current.current = next; // Keep later actions based on the retained working snapshot.
+      showError(cause);
+      return false;
+    }
+  };
+  const reload = () => {
+    try {
+      const loaded = loadData(window.localStorage, formatDate(new Date()));
+      current.current = loaded;
+      setData(loaded);
+      if (!draft.current.dirty) {
+        const content = loaded.notes[draft.current.date] ?? '';
+        draft.current.content = content;
+        setNoteDraft(content);
       }
-    } catch (e) {
-      console.error(e);
-    }
-    return DEFAULT_DAILY_TASKS;
-  });
+      setReady(true);
+      setError('');
+    } catch (cause) { showError(cause); }
+  };
+  useEffect(reload, []);
 
-  const [todos, setTodos] = useState<TodoItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.TODO_ITEMS);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error(e);
-    }
-    return [
-      { id: 't1', title: 'Review weekly goals', isCompleted: false, createdAt: Date.now() },
-      { id: 't2', title: 'Send project update', isCompleted: false, createdAt: Date.now() },
-    ];
-  });
-
-  const [noteContent, setNoteContent] = useState<string>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.NOTE);
-      if (saved !== null) return saved;
-    } catch (e) {
-      console.error(e);
-    }
-    return '';
-  });
-
-  const [isNotesOpen, setIsNotesOpen] = useState(false);
-  const [newTodoTitle, setNewTodoTitle] = useState('');
-  const [newHabitTitle, setNewHabitTitle] = useState('');
-  const [showAddHabitInput, setShowAddHabitInput] = useState(false);
-
-  // Random greeting selected on mount or state change
-  const [greeting, setGreeting] = useState(() => GREETINGS[Math.floor(Math.random() * GREETINGS.length)]);
-  // Index for cycling through uncompleted habits when clicking [Skip for now]
-  const [activeHabitCycleIndex, setActiveHabitCycleIndex] = useState(0);
-
-  // 2. Persistence & Midnight Reset check on window focus / visibility change
+  const flushNote = () => {
+    if (!draft.current.dirty) return true;
+    if (!ready) return false;
+    const { date, content } = draft.current;
+    const base = pending.current ?? current.current;
+    const notes = { ...base.notes };
+    if (content) notes[date] = content;
+    else delete notes[date];
+    if (!commit({ ...base, notes })) return false;
+    draft.current.dirty = false;
+    setError('');
+    return true;
+  };
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.DAILY_TASKS, JSON.stringify(dailyTasks));
-  }, [dailyTasks]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.TODO_ITEMS, JSON.stringify(todos));
-  }, [todos]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.NOTE, noteContent);
-  }, [noteContent]);
-
-  const checkMidnightReset = useCallback(() => {
-    const today = getTodayString();
-    setDailyTasks(prev =>
-      prev.map(task => {
-        if (task.lastCompletedDate && task.lastCompletedDate !== today) {
-          return { ...task, isCompleted: false };
-        }
-        return task;
-      })
-    );
-  }, []);
-
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        checkMidnightReset();
+    let midnight: ReturnType<typeof setTimeout>;
+    let lastZone = new Date().getTimezoneOffset();
+    let lastDay = formatDate(new Date());
+    const checkDay = () => {
+      const date = formatDate(new Date());
+      const zone = new Date().getTimezoneOffset();
+      if (date !== lastDay || zone !== lastZone) {
+        lastDay = date; lastZone = zone;
+        clearTimeout(midnight);
+        schedule();
       }
+      setToday(date);
+      if (!ready) return;
+      const tasks = resetDailyTasks(current.current.dailyTasks, date);
+      if (tasks.some((task, index) => task.isCompleted !== current.current.dailyTasks[index].isCompleted)) commit({ ...current.current, dailyTasks: tasks });
     };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', checkMidnightReset);
+    const visibility = () => { if (document.visibilityState === 'visible') checkDay(); };
+    const schedule = () => {
+      const now = new Date();
+      const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      midnight = setTimeout(() => { checkDay(); clearTimeout(midnight); schedule(); }, next.getTime() - now.getTime() + 50);
+    };
+    schedule();
+    const clock = setInterval(checkDay, 30_000);
+    document.addEventListener('visibilitychange', visibility);
+    window.addEventListener('focus', checkDay);
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (draft.current.dirty) { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', beforeUnload);
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', checkMidnightReset);
+      clearTimeout(midnight);
+      clearInterval(clock);
+      document.removeEventListener('visibilitychange', visibility);
+      window.removeEventListener('focus', checkDay);
+      window.removeEventListener('beforeunload', beforeUnload);
     };
-  }, [checkMidnightReset]);
+  }, [ready]);
 
-  // 3. Companion Engine State Evaluation
-  const incompleteHabits = useMemo(() => dailyTasks.filter(t => !t.isCompleted), [dailyTasks]);
-  const incompleteTodos = useMemo(() => todos.filter(t => !t.isCompleted), [todos]);
-
-  // Reset cycle index if out of bounds
-  useEffect(() => {
-    if (activeHabitCycleIndex >= incompleteHabits.length) {
-      setActiveHabitCycleIndex(0);
-    }
-  }, [incompleteHabits.length, activeHabitCycleIndex]);
-
-  const companionState = useMemo(() => {
-    if (incompleteHabits.length > 0) {
-      const currentHabit = incompleteHabits[activeHabitCycleIndex] || incompleteHabits[0];
-      return {
-        type: 'habit' as const,
-        text: `${greeting}, did you ${currentHabit.title.toLowerCase()} today?`,
-        targetHabit: currentHabit,
-      };
-    } else if (incompleteTodos.length > 0) {
-      const firstTodo = incompleteTodos[0];
-      return {
-        type: 'todo' as const,
-        text: `Daily tasks complete. Maybe you can check on "${firstTodo.title}"?`,
-        targetTodo: firstTodo,
-      };
-    } else {
-      return {
-        type: 'done' as const,
-        text: 'All caught up for today. Take a breather.',
-      };
-    }
-  }, [incompleteHabits, incompleteTodos, activeHabitCycleIndex, greeting]);
-
-  // Handlers
-  const handleToggleHabit = (id: string) => {
-    const today = getTodayString();
-    setDailyTasks(prev =>
-      prev.map(t => {
-        if (t.id === id) {
-          const nextCompleted = !t.isCompleted;
-          return {
-            ...t,
-            isCompleted: nextCompleted,
-            lastCompletedDate: nextCompleted ? today : '',
-          };
-        }
-        return t;
-      })
-    );
+  const incomplete = data.dailyTasks.filter(task => !task.isCompleted);
+  const activeHabit = incomplete[cycle % (incomplete.length || 1)];
+  const activeTodo = data.todos.find(todo => !todo.isCompleted);
+  const prompt = activeHabit ? `${greeting}, did you ${activeHabit.title.toLowerCase()} today?`
+    : activeTodo ? `Daily tasks complete. Maybe you can check on “${activeTodo.title}”?`
+      : 'All caught up for today. Take a breather.';
+  const toggle = (id: string) => {
+    const date = formatDate(new Date());
+    setToday(date);
+    const tasks = resetDailyTasks(current.current.dailyTasks, date).map(task => task.id === id ? toggleHabit(task, date) : task);
+    return commit({ ...current.current, dailyTasks: tasks });
   };
-
-  const handleCompanionYes = () => {
-    if (companionState.type === 'habit' && companionState.targetHabit) {
-      handleToggleHabit(companionState.targetHabit.id);
-      setGreeting(GREETINGS[Math.floor(Math.random() * GREETINGS.length)]);
-    } else if (companionState.type === 'todo' && companionState.targetTodo) {
-      handleToggleTodo(companionState.targetTodo.id);
-    }
+  const toggleTodo = (id: string) => commit({ ...current.current, todos: current.current.todos.map(todo => todo.id === id ? { ...todo, isCompleted: !todo.isCompleted } : todo) });
+  const remove = (type: 'habit' | 'todo', id: string) => {
+    const next = type === 'habit' ? { ...current.current, dailyTasks: current.current.dailyTasks.filter(task => task.id !== id) }
+      : { ...current.current, todos: current.current.todos.filter(todo => todo.id !== id) };
+    if (commit(next)) setEditing(null);
   };
-
-  const handleCompanionSkip = () => {
-    if (companionState.type === 'habit' && incompleteHabits.length > 1) {
-      setActiveHabitCycleIndex(prev => (prev + 1) % incompleteHabits.length);
-      setGreeting(GREETINGS[Math.floor(Math.random() * GREETINGS.length)]);
-    } else {
-      // Pick a new random greeting
-      setGreeting(GREETINGS[Math.floor(Math.random() * GREETINGS.length)]);
-    }
+  const add = (title: string, type: 'habit' | 'todo', date = formatDate(new Date())) => {
+    if (!title.trim()) return false;
+    const id = crypto.randomUUID();
+    const next = type === 'habit'
+      ? { ...current.current, dailyTasks: [...current.current.dailyTasks, { id, title: title.trim(), isCompleted: false, lastCompletedDate: null, completionHistory: [] }] }
+      : { ...current.current, todos: [...current.current.todos, { id, title: title.trim(), isCompleted: false, createdAt: parseDate(date).getTime() }] };
+    return commit(next);
   };
-
-  const handleToggleTodo = (id: string) => {
-    setTodos(prev =>
-      prev.map(t => (t.id === id ? { ...t, isCompleted: !t.isCompleted } : t))
-    );
+  const openAdd = (date: string) => {
+    setAddTitle(''); setAddType('todo'); setAddDate(date); setFormError(''); setAdding(true);
   };
-
-  const handleAddTodo = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTodoTitle.trim()) return;
-    setTodos(prev => [
-      ...prev,
-      { id: Date.now().toString(), title: newTodoTitle.trim(), isCompleted: false, createdAt: Date.now() },
-    ]);
-    setNewTodoTitle('');
+  const submitAdd = (event: FormEvent) => {
+    event.preventDefault();
+    if (!addTitle.trim()) { setFormError('Enter a title.'); return; }
+    try {
+      if (add(addTitle, addType, addDate)) { setAdding(false); setAddTitle(''); }
+    } catch { setFormError('Choose a valid date.'); }
   };
-
-  const handleDeleteTodo = (id: string) => {
-    setTodos(prev => prev.filter(t => t.id !== id));
+  const changeNoteDate = (date: string) => {
+    if (!flushNote()) return false;
+    const content = current.current.notes[date] ?? '';
+    draft.current = { date, content, dirty: false };
+    setNoteDate(date); setNoteDraft(content);
+    return true;
   };
-
-  const handleAddHabit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newHabitTitle.trim()) return;
-    setDailyTasks(prev => [
-      ...prev,
-      { id: Date.now().toString(), title: newHabitTitle.trim(), isCompleted: false, lastCompletedDate: '' },
-    ]);
-    setNewHabitTitle('');
-    setShowAddHabitInput(false);
+  const startEdit = (type: 'habit' | 'todo', item: DailyTask | TodoItem) => {
+    setEditing({ type, id: item.id }); setEditTitle(item.title); setEditError('');
   };
-
-  const handleDeleteHabit = (id: string) => {
-    setDailyTasks(prev => prev.filter(t => t.id !== id));
+  const saveEdit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!editing) return;
+    if (!editTitle.trim()) { setEditError('Enter a title.'); return; }
+    const { type, id } = editing;
+    const next = type === 'habit' ? { ...current.current, dailyTasks: current.current.dailyTasks.map(task => task.id === id ? { ...task, title: editTitle.trim() } : task) }
+      : { ...current.current, todos: current.current.todos.map(todo => todo.id === id ? { ...todo, title: editTitle.trim() } : todo) };
+    if (commit(next)) setEditing(null);
   };
+  const renderDetailItem = (type: 'habit' | 'todo', item: DailyTask | TodoItem) => <li key={item.id}>
+    {editing?.type === type && editing.id === item.id ? <form onSubmit={saveEdit}>
+      <label>Title<input autoFocus value={editTitle} onChange={event => setEditTitle(event.target.value)} required /></label>
+      {editError && <p role="alert">{editError}</p>}
+      <button type="submit">[Save]</button><button type="button" onClick={() => setEditing(null)}>[Cancel]</button>
+    </form> : <><span>{item.title}</span><div className="item-actions">
+      <button aria-label={`Edit ${item.title}`} onClick={() => startEdit(type, item)}>[edit]</button>
+      <button aria-label={`Delete ${item.title}`} onClick={() => remove(type, item.id)}>[delete]</button>
+    </div></>}
+  </li>;
+  const closePanel = () => { setSelected(null); setEditing(null); dayTrigger.current?.focus(); };
+  const days = view === 'month' ? getMonthGrid(cursor.getFullYear(), cursor.getMonth()).flat() : getWeekGrid(cursor);
+  const heading = view === 'month' ? format(cursor, 'MMMM yyyy') : `${format(days[0], 'MMM d')} – ${format(days[6], 'MMM d, yyyy')}`;
 
-  // Sort todos: incomplete first, completed at the bottom
-  const sortedTodos = useMemo(() => {
-    return [...todos].sort((a, b) => Number(a.isCompleted) - Number(b.isCompleted));
-  }, [todos]);
-
-  return (
-    <div className="app-container">
-      {/* Header */}
-      <header>
-        <button className="text-btn" onClick={() => setIsNotesOpen(true)}>
-          [Notes]
-        </button>
+  return <div className="app-shell">
+    <a className="skip-link" href="#calendar">Skip to calendar</a>
+    <aside className="sidebar" aria-label="Daily companion">
+      <header className="brand"><h1>text companion</h1><p>A little room for your day.</p></header>
+      {error && <div className="storage-error" role="alert"><p>{error}</p><button onClick={() => { if (!ready) reload(); else if (draft.current.dirty) flushNote(); else commit(pending.current ?? current.current); }}>[Retry save]</button></div>}
+      <fieldset disabled={!ready} className="sidebar-content">
+        <details open><summary>Companion</summary><div className="section-content">
+          <p className="companion-prompt" aria-live="polite">{prompt}</p>
+          {(activeHabit || activeTodo) && <div className="actions">
+            <button onClick={() => { if (activeHabit ? toggle(activeHabit.id) : activeTodo && toggleTodo(activeTodo.id)) setGreeting(randomGreeting()); }}>[Yes, done]</button>
+            <button onClick={() => { setCycle(value => value + 1); setGreeting(randomGreeting()); }}>[Skip for now]</button>
+          </div>}
+        </div></details>
+        <details open><summary>Daily Habits</summary><div className="section-content">
+          {!data.dailyTasks.length && <p className="muted">Start with one small habit.</p>}
+          <ul className="task-list">{data.dailyTasks.map(task => <li key={task.id}>
+            <label className={task.isCompleted ? 'completed' : ''}><input type="checkbox" checked={task.isCompleted} onChange={() => toggle(task.id)} /><span>{task.title}</span></label>
+            <button aria-label={`Delete habit ${task.title}`} onClick={() => remove('habit', task.id)}>[delete]</button>
+          </li>)}</ul>
+          <form onSubmit={event => { event.preventDefault(); if (add(habitTitle, 'habit')) setHabitTitle(''); }}>
+            <label className="sr-only" htmlFor="new-habit">New habit</label><input id="new-habit" placeholder="> add a daily habit…" value={habitTitle} onChange={event => setHabitTitle(event.target.value)} required />
+            <button className="sr-only focus-visible" type="submit">Add habit</button>
+          </form>
+        </div></details>
+        <details open><summary>To-Do</summary><div className="section-content">
+          {!data.todos.length && <p className="muted">Nothing on your list. Room to breathe.</p>}
+          <ul className="task-list">{[...data.todos].sort((a, b) => Number(a.isCompleted) - Number(b.isCompleted)).map(todo => <li key={todo.id}>
+            <label className={todo.isCompleted ? 'completed' : ''}><input type="checkbox" checked={todo.isCompleted} onChange={() => toggleTodo(todo.id)} /><span>{todo.title}</span></label>
+            <button aria-label={`Delete task ${todo.title}`} onClick={() => remove('todo', todo.id)}>[delete]</button>
+          </li>)}</ul>
+          <form onSubmit={event => { event.preventDefault(); if (add(todoTitle, 'todo')) setTodoTitle(''); }}>
+            <label className="sr-only" htmlFor="new-todo">New task</label><input id="new-todo" placeholder="> add a task…" value={todoTitle} onChange={event => setTodoTitle(event.target.value)} required />
+            <button className="sr-only focus-visible" type="submit">Add task</button>
+          </form>
+        </div></details>
+        <details open className="notes-section"><summary>Notes</summary><div className="section-content">
+          <div className="note-navigation"><button aria-label="Previous note day" onClick={() => changeNoteDate(formatDate(addDays(parseDate(noteDate), -1)))}>&lt;</button>
+            <label className="sr-only" htmlFor="note-date">Note date</label><input id="note-date" type="date" value={noteDate} onChange={event => { try { parseDate(event.target.value); changeNoteDate(event.target.value); } catch { /* Native date input can be temporarily empty. */ } }} />
+            <button aria-label="Next note day" onClick={() => changeNoteDate(formatDate(addDays(parseDate(noteDate), 1)))}>&gt;</button></div>
+          <label className="sr-only" htmlFor="daily-note">Daily note</label><textarea id="daily-note" placeholder="A thought worth keeping…" value={noteDraft} onChange={event => {
+            setNoteDraft(event.target.value); draft.current = { date: noteDate, content: event.target.value, dirty: true }; flushNote();
+          }} />
+          <div className="actions"><button onClick={() => { if (flushNote()) setAllNotes(true); }}>[All notes]</button><span className="muted" role="status">{draft.current.dirty ? 'Not saved' : 'Saved locally'}</span></div>
+        </div></details>
+        <button className="add-item" aria-label="Add item" onClick={() => openAdd(formatDate(new Date()))}>[+ add]</button>
+      </fieldset>
+    </aside>
+    <main id="calendar" className="calendar" tabIndex={-1}>
+      <header className="calendar-toolbar"><div><p className="muted">Your days, at a glance</p><h2 id="calendar-heading">{heading}</h2></div>
+        <nav aria-label="Calendar navigation"><button aria-label={`Previous ${view}`} onClick={() => setCursor(date => view === 'month' ? addMonths(startOfMonth(date), -1) : addWeeks(date, -1))}>&lt;</button>
+          <button onClick={() => setCursor(new Date())}>Today</button><button aria-label={`Next ${view}`} onClick={() => setCursor(date => view === 'month' ? addMonths(startOfMonth(date), 1) : addWeeks(date, 1))}>&gt;</button>
+          <button aria-pressed={view === 'month'} onClick={() => setView('month')}>Month</button><button aria-pressed={view === 'week'} onClick={() => setView('week')}>Week</button>
+        </nav>
       </header>
-
-      {/* Main Companion Section */}
-      <main>
-        <section className="companion-section">
-          <h1 className="companion-prompt">{companionState.text}</h1>
-          {companionState.type !== 'done' && (
-            <div className="companion-actions">
-              <button className="action-link" onClick={handleCompanionYes}>
-                [Yes, done]
-              </button>
-              <button className="action-link" onClick={handleCompanionSkip}>
-                [Skip for now]
-              </button>
-            </div>
-          )}
-        </section>
-
-        {/* Lists Section */}
-        <div className="lists-grid">
-          {/* Daily Habits Column */}
-          <div className="list-column">
-            <h2>
-              Daily Habits
-              <button
-                className="text-btn"
-                style={{ fontSize: '0.8rem', textTransform: 'none' }}
-                onClick={() => setShowAddHabitInput(prev => !prev)}
-              >
-                {showAddHabitInput ? '[cancel]' : '[+ add]'}
-              </button>
-            </h2>
-
-            <ul className="list-items">
-              {dailyTasks.map(task => (
-                <li key={task.id} className={`list-item ${task.isCompleted ? 'completed' : ''}`}>
-                  <div className="item-content" onClick={() => handleToggleHabit(task.id)}>
-                    <input
-                      type="checkbox"
-                      checked={task.isCompleted}
-                      onChange={() => handleToggleHabit(task.id)}
-                      className="item-checkbox"
-                    />
-                    <span>{task.title}</span>
-                  </div>
-                  <button
-                    className="delete-btn"
-                    onClick={() => handleDeleteHabit(task.id)}
-                    title="Delete habit"
-                  >
-                    [x]
-                  </button>
-                </li>
-              ))}
-            </ul>
-
-            {showAddHabitInput && (
-              <form onSubmit={handleAddHabit} className="add-form">
-                <input
-                  type="text"
-                  placeholder="> new habit..."
-                  value={newHabitTitle}
-                  onChange={e => setNewHabitTitle(e.target.value)}
-                  className="add-input"
-                  autoFocus
-                />
-              </form>
-            )}
-          </div>
-
-          {/* To-Do List Column */}
-          <div className="list-column">
-            <h2>To-Do</h2>
-            <ul className="list-items">
-              {sortedTodos.map(todo => (
-                <li key={todo.id} className={`list-item ${todo.isCompleted ? 'completed' : ''}`}>
-                  <div className="item-content" onClick={() => handleToggleTodo(todo.id)}>
-                    <input
-                      type="checkbox"
-                      checked={todo.isCompleted}
-                      onChange={() => handleToggleTodo(todo.id)}
-                      className="item-checkbox"
-                    />
-                    <span>{todo.title}</span>
-                  </div>
-                  <button
-                    className="delete-btn"
-                    onClick={() => handleDeleteTodo(todo.id)}
-                    title="Delete todo"
-                  >
-                    [x]
-                  </button>
-                </li>
-              ))}
-            </ul>
-
-            <form onSubmit={handleAddTodo} className="add-form">
-              <input
-                type="text"
-                placeholder="> type a new task..."
-                value={newTodoTitle}
-                onChange={e => setNewTodoTitle(e.target.value)}
-                className="add-input"
-              />
-            </form>
-          </div>
-        </div>
-      </main>
-
-      {/* Footer / Branding */}
-      <footer style={{ marginTop: '5px', textAlign: 'center' }}>
-        <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: '#999' }}>
-          Text Companion — Distraction-Free Productivity
-        </span>
-      </footer>
-
-      {/* Floating Notes Modal Overlay */}
-      {isNotesOpen && (
-        <div className="notes-overlay">
-          <div className="notes-header">
-            <span className="notes-title">scratchpad</span>
-            <button className="text-btn" onClick={() => setIsNotesOpen(false)}>
-              [Close]
-            </button>
-          </div>
-          <textarea
-            className="notes-textarea"
-            placeholder="Type your transient thoughts here... (autosaved)"
-            value={noteContent}
-            onChange={e => setNoteContent(e.target.value)}
-            autoFocus
-          />
-        </div>
-      )}
-    </div>
-  );
+      <div className="weekday-row" aria-hidden="true">{['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => <span key={day}>{day}</span>)}</div>
+      <div className={`calendar-grid ${view}`} aria-labelledby="calendar-heading">
+        {days.map(day => {
+          const date = formatDate(day);
+          const count = data.dailyTasks.filter(task => task.completionHistory.includes(date)).length;
+          const todos = data.todos.filter(todo => formatDate(new Date(todo.createdAt)) === date);
+          const hasNote = Boolean(data.notes[date]);
+          return <button key={date} className={`day-cell ${day.getMonth() !== cursor.getMonth() ? 'other-month' : ''} ${date === today ? 'today' : ''} ${date === selected ? 'selected' : ''}`}
+            aria-current={date === today ? 'date' : undefined} aria-pressed={date === selected} aria-expanded={date === selected} aria-controls={date === selected ? 'day-details' : undefined}
+            aria-label={`${format(day, 'EEEE, MMMM d, yyyy')}, ${count} habits completed, ${todos.length} tasks${hasNote ? ', note available' : ''}`}
+            onClick={event => { dayTrigger.current = event.currentTarget; setSelected(date); setEditing(null); }}>
+            <span className="day-heading"><time dateTime={date}>{day.getDate()}</time>{count > 0 && <span className="habit-count" title={`${count} habits completed`}>{count}</span>}{hasNote && <span aria-hidden="true">•</span>}</span>
+            <span className="day-tasks">{todos.slice(0, 3).map(todo => <span key={todo.id} className={todo.isCompleted ? 'completed' : ''}>{todo.title}</span>)}{todos.length > 3 && <span className="muted">+{todos.length - 3} more</span>}</span>
+          </button>;
+        })}
+      </div>
+      <p className="calendar-caption">A number for habits done. A dot for thoughts saved. Select a day to look closer.</p>
+      {selected && <aside id="day-details" className="detail-panel" aria-label="Day details" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); closePanel(); } }}>
+        <header><h2>{format(parseDate(selected), 'EEEE, MMMM d')}</h2><button ref={panelClose} onClick={closePanel}>[Close]</button></header>
+        <h3>Habits completed</h3><ul className="detail-list">{data.dailyTasks.filter(task => task.completionHistory.includes(selected)).map(task => renderDetailItem('habit', task))}</ul>
+        {!data.dailyTasks.some(task => task.completionHistory.includes(selected)) && <p className="muted">No habits completed.</p>}
+        <h3>To-Do</h3><ul className="detail-list">{data.todos.filter(todo => formatDate(new Date(todo.createdAt)) === selected).map(todo => renderDetailItem('todo', todo))}</ul>
+        {!data.todos.some(todo => formatDate(new Date(todo.createdAt)) === selected) && <p className="muted">No tasks for this day.</p>}
+        <h3>Note</h3><p className="note-preview">{data.notes[selected] || 'No note for this day.'}</p>
+        <p className="muted">Notes edited in sidebar. Habit edits and deletes apply to all dates.</p>
+        <button disabled={!ready} aria-label="Add item for selected day" onClick={() => openAdd(selected)}>[+ add]</button>
+      </aside>}
+    </main>
+    {adding && <Modal title="Add item" onClose={() => setAdding(false)}><form onSubmit={submitAdd}>
+      <label>Title<input autoFocus value={addTitle} onChange={event => setAddTitle(event.target.value)} required /></label>
+      <label htmlFor="add-type">Type</label><select id="add-type" value={addType} onChange={event => setAddType(event.target.value === 'habit' ? 'habit' : 'todo')}><option value="todo">To-Do</option><option value="habit">Daily Habit</option></select>
+      {addType === 'todo' ? <label>Date<input type="date" value={addDate} onChange={event => setAddDate(event.target.value)} required /></label> : <p className="muted">Daily habits repeat each day. Complete them to record a date.</p>}
+      {formError && <p role="alert">{formError}</p>}
+      <div className="actions"><button type="submit">[Add]</button><button type="button" onClick={() => setAdding(false)}>[Cancel]</button></div>
+    </form></Modal>}
+    {allNotes && <Modal title="All notes" onClose={() => setAllNotes(false)}><ul className="all-notes">
+      {Object.entries(data.notes).filter(([, content]) => content).sort(([a], [b]) => b.localeCompare(a)).map(([date, content]) => <li key={date}><button onClick={() => { if (changeNoteDate(date)) setAllNotes(false); }}><time dateTime={date}>{date}</time><span>{content.slice(0, 140)}</span></button></li>)}
+      {!Object.values(data.notes).some(Boolean) && <li className="muted">No notes yet. Write your first thought in the sidebar.</li>}
+    </ul></Modal>}
+  </div>;
 }

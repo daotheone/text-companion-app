@@ -1,70 +1,60 @@
-# Design Document: Text Companion App
+# Text Companion App
 
-## 1. Product Overview
+Minimalist, typography-first productivity app built with Vite, React, and TypeScript. Data stays in browser `localStorage`; no accounts or backend.
 
-**Name:** Text Companion (Placeholder)
-**Concept:** A minimalist, distraction-free productivity app that uses a conversational text interface to guide the user through daily habits, one-off tasks, and quick thoughts.
-**Design Philosophy:** Typography-focused. No icons, no flashy animations, no complex menus. Just plain text that feels like a quiet, organized assistant.
+## Product
 
----
+Calendar is the main screen, with Monday-first month and week views. Each day shows completed-habit count, up to three todo titles plus overflow, and an indicator for a nonempty daily note. Clicking a day opens a 320px detail panel over the calendar: completed habits, todos, and read-only note. Titles can be edited inline; deleting an item removes that whole item, including a habit's history, immediately without confirmation.
 
-## 2. Core Features & Logic
+A fixed 320px sidebar holds four initially expanded, collapsible sections:
 
-### A. The Companion (Daily Planner & Dynamic Greeting)
-This is the main screen of the app. It reads the state of the user's tasks and displays a single, focused text prompt.
+- **Companion:** Random greeting with the first incomplete habit; `[Yes, done]` completes it and `[Skip for now]` cycles incomplete habits. Once habits are done, suggest the first incomplete todo. When both lists are complete, show “All caught up for today. Take a breather.”
+- **Daily Habits:** Add, toggle, and delete recurring habits. Completing records today; undo removes only today's completion. Earlier history survives midnight.
+- **To-Do:** Add, toggle, and delete one-off tasks. Completed items move below incomplete items and are struck through.
+- **Notes:** Per-day editor with its own previous/next-date selector and keystroke autosave. “All notes” opens a scrollable date/preview dialog; selecting an entry jumps the note editor to that day.
 
-*   **Greeting Pool:** An array of randomized text strings (e.g., "Hello", "Hi there", "Good to see you", "Welcome back").
-*   **Logic Flow:**
-    1.  **Check Daily Habits:** The app checks the list of recurring daily tasks (e.g., "drink water", "read 10 pages").
-    2.  **State 1 (Incomplete Habit):** If a daily habit is unchecked, display: `"[Greeting], did you [Daily Task] today?"` (e.g., *"Hello, did you drink water today?"*). The user can click a "Yes" or "Not yet" text button.
-    3.  **State 2 (Habits Done, Todos Remain):** If all daily tasks are done, but the To-Do list has items, display: `"Daily tasks complete. Maybe you can check on [To-Do Item]?"`
-    4.  **State 3 (Everything Done):** If both lists are empty/completed, display: `"All caught up for today. Take a breather."`
+`[+ add]` opens a title/type form. Date is editable for todos only: sidebar defaults to today, while adding from a selected day defaults to that day. Habits are undated daily definitions, not scheduled events. Todo's selected date is represented by a local timestamp in the existing `createdAt` field; calendar groups that timestamp by local date.
 
-### B. To-Do List
-A standard task tracker for non-recurring items.
-*   **Actions:** Add new item, Mark as complete, Delete item.
-*   **Display:** A simple vertical text list. Completed items are moved to the bottom and struck through.
+## Data contract
 
-### C. Floating Notes
-A frictionless scratchpad for transient thoughts.
-*   **Access:** Always accessible via a subtle "Notes" text button pinned to the corner of the screen.
-*   **Behavior:** Clicking it expands a text area overlay (modal or slide-out). It auto-saves on every keystroke.
-*   **Data:** Just one single continuous text block (no complex folders or multiple files needed for V1).
+| Domain concept | Attributes | Persistence |
+| --- | --- | --- |
+| `DailyTask` | `id`, `title`, `isCompleted`, `lastCompletedDate`, `completionHistory: string[]` | JSON array at `text-companion-daily-tasks` |
+| `TodoItem` | `id`, `title`, `isCompleted`, `createdAt: number` | JSON array at `text-companion-todo-items` |
+| `DailyNote` | `date`, `content` | `Record<string, string>` mapping date to content at `text-companion-daily-notes` |
+| `Note` | Legacy single scratchpad | Raw text at `text-companion-note`, migrated once |
 
----
+All date keys use validated local `YYYY-MM-DD`, never UTC serialization. Month indices are zero-based; weeks start Monday. `completionHistory` contains unique local day strings. `isCompleted` reflects whether today is in history; `lastCompletedDate` is the latest history date or `null`. A midnight timer and initialization/focus/visibility/periodic checks refresh today's state, including after timezone changes. Stored history strings remain unchanged when timezone changes.
 
-## 3. Data Architecture (Local Storage)
+On load, validate stored shapes before changing them. Legacy habits missing history receive their valid `lastCompletedDate` as history; empty legacy dates normalize to `null`. Migrate raw legacy note into today's record entry. If both contents are nonempty, preserve existing content followed by a blank line and legacy content. Persist destination successfully before removing source; retry must not duplicate content, including after a crash between write and removal. Invalid data or storage failures retain original data and show a visible error with retry. Full storage/reset decision: [ADR 0002](docs/adr/0002-data-storage.md).
 
-To keep this simple and fast, all data should be saved directly to the device (e.g., browser `localStorage` or local device storage), avoiding the need for a database or user logins.
+## Interface and accessibility
 
-### Data Models
+Warm off-white background, charcoal text, generous spacing. No icons, heavy shadows, rounded-card clutter, flashy motion, or complex menus. Sidebar scrolls as a whole; detail panel and all-notes list scroll internally. Note editor fills available sidebar space without trapping section scrolling.
 
-| Entity | Attributes | Description |
-| :--- | :--- | :--- |
-| **DailyTask** | `id`, `title`, `isCompleted`, `lastCompletedDate` | Recurring habits. Resets at midnight based on `lastCompletedDate`. |
-| **TodoItem** | `id`, `title`, `isCompleted`, `createdAt` | One-off tasks. |
-| **Note** | `content`, `lastEdited` | A single string of text for the floating scratchpad. |
+Use labeled native controls, keyboard-operable day buttons and collapse headers, visible focus, and descriptive previous/next labels. Modal dialogs have an accessible name, initial focus, focus containment, Escape/Close dismissal, and focus restoration to the opener. Respect reduced-motion preferences for panel transitions.
 
----
+Desktop-first scope. No drag-and-drop, custom recurrence, separate calendar events, day view, accounts, or server sync; existing daily habits still recur.
 
-## 4. User Interface (UI) Layout
+## Development
 
-Because this is a "text-only" app, spacing and typography are your primary design tools.
+```sh
+npm install
+npm run dev
+npm test
+npm run build
+```
 
-**Main Screen Structure:**
-1.  **Top Right:** A small `[Notes]` text button.
-2.  **Center Screen (The Companion):** Large, prominent text displaying the current dynamic prompt. Below it, small text links to interact (e.g., `[Yes, done]` / `[Skip for now]`).
-3.  **Bottom Half (The Lists):**
-    *   Two side-by-side or stacked text columns: **Daily Habits** and **To-Do List**.
-    *   Input field at the bottom of the To-Do list: `> type a new task and press enter...`
+`npm test` runs focused checks for local dates, habit undo/reset, schema validation, and retry-safe migration. `npm run build` typechecks and builds production artifacts. Browser checks use Playwright's Chromium:
 
-**Floating Notes State:**
-*   When `[Notes]` is clicked, a semi-transparent overlay covers the screen with a large, borderless `<textarea>`. A `[Close]` text button sits at the top right.
+```sh
+npx playwright install chromium
+# With npm run dev running at http://127.0.0.1:5173:
+npm run test:browser
+```
 
----
+Set `APP_URL` to test a different running app URL.
 
-## 5. Implementation Phases
+## Implementation order
 
-*   **Phase 1: State & Storage:** Set up the basic data structures and ensure they save/load from local storage correctly.
-*   **Phase 2: The Logic Engine:** Write the if/else logic for the Companion Greeting. Ensure it accurately reads the arrays from Phase 1 to pick the right sentence.
-*   **Phase 3: UI & Typography:** Build the minimalist front-end, hook up the text buttons to the data state, and implement the floating note overlay.
+[Issue #1](https://github.com/daotheone/text-companion-app/issues/1) is the live map; native GitHub dependencies gate its tickets. Land local-date helpers and domain types before migration; then integrate history/reset and sidebar/notes before final calendar acceptance. Detail-panel display belongs to #10; edit/delete belongs only to #16. Keep acceptance items unchecked until implementation is verified.

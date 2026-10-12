@@ -158,6 +158,20 @@ try {
   await page.evaluate(() => { Storage.prototype.setItem = window.originalSetItem; });
   await dialog.getByRole('button', { name: '[Add]', exact: true }).click();
   assert.equal(await page.getByRole('checkbox', { name: 'Retry add once', exact: true }).count(), 1);
+  await page.getByRole('button', { name: 'Add item', exact: true }).click();
+  await dialog.getByLabel('Title').fill('Canceled failed add');
+  await page.evaluate(() => {
+    window.originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key, value) {
+      if (key === 'text-companion-todo-items') throw new DOMException('Quota reached', 'QuotaExceededError');
+      return window.originalSetItem.call(this, key, value);
+    };
+  });
+  await dialog.getByRole('button', { name: '[Add]', exact: true }).click();
+  await dialog.getByRole('button', { name: '[Cancel]', exact: true }).click();
+  await page.evaluate(() => { Storage.prototype.setItem = window.originalSetItem; });
+  await page.getByLabel('Daily note', { exact: true }).fill('Save after canceled add');
+  assert.equal(await page.getByRole('checkbox', { name: 'Canceled failed add', exact: true }).count(), 0);
   await page.clock.install({ time: new Date('2024-02-29T23:59:59-08:00') });
   await page.reload();
   await page.getByRole('button', { name: 'Add item', exact: true }).click();

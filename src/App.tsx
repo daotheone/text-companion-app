@@ -154,6 +154,12 @@ export default function App() {
     addId.current = crypto.randomUUID();
     setAddTitle(''); setAddType('todo'); setAddDate(date); setFormError(''); setAdding(true);
   };
+  const cancelAdd = () => {
+    const discard = (value: AppData) => ({ ...value, dailyTasks: value.dailyTasks.filter(task => task.id !== addId.current), todos: value.todos.filter(todo => todo.id !== addId.current) });
+    current.current = discard(current.current);
+    if (pending.current) pending.current = discard(pending.current);
+    setAdding(false);
+  };
   const submitAdd = (event: FormEvent) => {
     event.preventDefault();
     if (!addTitle.trim()) { setFormError('Enter a title.'); return; }
@@ -280,12 +286,12 @@ export default function App() {
         <button disabled={!ready} aria-label="Add item for selected day" onClick={() => openAdd(selected)}>[+ add]</button>
       </aside>}
     </main>
-    {adding && <Modal title="Add item" onClose={() => setAdding(false)}><form onSubmit={submitAdd}>
+    {adding && <Modal title="Add item" onClose={cancelAdd}><form onSubmit={submitAdd}>
       <label>Title<input autoFocus value={addTitle} onChange={event => setAddTitle(event.target.value)} required /></label>
       <label htmlFor="add-type">Type</label><select id="add-type" value={addType} onChange={event => setAddType(event.target.value === 'habit' ? 'habit' : 'todo')}><option value="todo">To-Do</option><option value="habit">Daily Habit</option></select>
       {addType === 'todo' ? <label>Date<input type="date" value={addDate} onChange={event => setAddDate(event.target.value)} required /></label> : <p className="muted">Daily habits repeat each day. Complete them to record a date.</p>}
       {formError && <p role="alert">{formError}</p>}
-      <div className="actions"><button type="submit">[Add]</button><button type="button" onClick={() => setAdding(false)}>[Cancel]</button></div>
+      <div className="actions"><button type="submit">[Add]</button><button type="button" onClick={cancelAdd}>[Cancel]</button></div>
     </form></Modal>}
     {allNotes && <Modal title="All notes" onClose={() => setAllNotes(false)}><ul className="all-notes">
       {Object.entries(data.notes).filter(([, content]) => content).sort(([a], [b]) => b.localeCompare(a)).map(([date, content]) => <li key={date}><button onClick={() => { if (changeNoteDate(date)) setAllNotes(false); }}><time dateTime={date}>{date}</time><span>{content.slice(0, 140)}</span></button></li>)}

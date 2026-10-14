@@ -136,8 +136,8 @@ const contrast = async (scope = page) => {
         const actual = ratio(getComputedStyle(element, '::placeholder').color, background(element));
         if (actual < 4.5) failures.push(`placeholder: ${actual.toFixed(2)}`);
       }
-      if (element.matches(':focus-visible') && style.outlineStyle !== 'none') {
-        if (parseFloat(style.outlineWidth) < 2 || ratio(style.outlineColor, background(element)) < 3) failures.push(`focus: ${element.tagName}`);
+      if (element.matches(':focus-visible')) {
+        if (style.outlineStyle === 'none' || parseFloat(style.outlineWidth) < 2 || ratio(style.outlineColor, background(element)) < 3) failures.push(`focus: ${element.tagName}`);
       }
     }
     return failures;
@@ -239,10 +239,17 @@ try {
   assert.equal(await theme.inputValue(), 'system');
   await appearance('light');
   assert.equal(await page.evaluate(key => localStorage.getItem(key), themeKey), 'invalid-theme', 'Invalid stored preference stays untouched');
+  await page.emulateMedia({ colorScheme: 'light' });
   await theme.selectOption('dark');
+  await appearance('dark');
   await tab.waitForFunction(() => document.querySelector('#theme').value === 'dark');
   await tab.evaluate(() => localStorage.clear());
   await page.waitForFunction(() => document.querySelector('#theme').value === 'system');
+  await appearance('light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await appearance('dark');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await appearance('light');
   await tab.close();
   console.log('Theme: same-origin tabs, removal, clearing and invalid preference fallback passed.');
 
@@ -323,6 +330,12 @@ try {
     await page.keyboard.press('Tab');
     await page.keyboard.press('Shift+Tab');
     assert.equal(await theme.evaluate(el => el === document.activeElement && el.matches(':focus-visible')), true);
+    const hiddenFocus = await page.addStyleTag({ content: '#theme:focus-visible { outline: none !important; }' });
+    try {
+      await assert.rejects(() => contrast(), error => error.code === 'ERR_ASSERTION' && error.actual.includes('focus: SELECT'), 'Missing keyboard focus outline must fail contrast check');
+    } finally {
+      await hiddenFocus.evaluate(el => el.remove());
+    }
     await contrast();
     await screenshot(`auth-${value}`);
   }

@@ -32,7 +32,7 @@ A new account with no cloud row offers `[Import browser data]`. Confirm only for
 
 ## Interface and accessibility
 
-Warm off-white background, charcoal text, generous spacing. No icons, heavy shadows, rounded-card clutter, flashy motion, or complex menus. Sidebar scrolls as a whole; detail panel and all-notes list scroll internally. Note editor fills available sidebar space without trapping section scrolling.
+Theme offers System (default), Light (warm off-white), and Dark (soft warm charcoal), remembering this browser's choice across tabs independently of accounts and cloud data. No icons, heavy shadows, rounded-card clutter, flashy motion, or complex menus. Sidebar scrolls as a whole; detail panel and all-notes list scroll internally. Note editor fills available sidebar space without trapping section scrolling.
 
 Use labeled native controls, keyboard-operable day buttons and collapse headers, visible focus, and descriptive previous/next labels. Modal dialogs have an accessible name, initial focus, focus containment, Escape/Close dismissal, and focus restoration to the opener. Respect reduced-motion preferences for panel transitions.
 
@@ -70,7 +70,7 @@ VITE_SUPABASE_URL=https://test.supabase.co VITE_SUPABASE_PUBLISHABLE_KEY=test-pu
 npm run test:browser
 ```
 
-Set `APP_URL` to test a different running app URL. Browser checks cover immediate-session signup, confirmation-required signup, login, restored/refreshed sessions, and DailyTask/TodoItem/DailyNote isolation. To replay issue #17 specifically, start Vite with `VITE_SUPABASE_URL=https://test.supabase.co/rest/v1/` and the same mock public key, then run `APP_URL=http://127.0.0.1:5173 node tests/signup-path.test.mjs`. The mocked gateway returns the exact reported `PGRST125` error for a malformed signup path; no real account is created.
+Browser checks also cover theme startup before React, OS changes, overrides, tab sync, storage failures, rendered contrast, dialogs, and data preservation; `SCREENSHOT_DIR` saves light/dark evidence and `CONFIG_ONLY=1` checks an unconfigured shell. Set `APP_URL` to test a different running app URL. Browser checks cover immediate-session signup, confirmation-required signup, login, restored/refreshed sessions, and DailyTask/TodoItem/DailyNote isolation. To replay issue #17 specifically, start Vite with `VITE_SUPABASE_URL=https://test.supabase.co/rest/v1/` and the same mock public key, then run `APP_URL=http://127.0.0.1:5173 node tests/signup-path.test.mjs`. The mocked gateway returns the exact reported `PGRST125` error for a malformed signup path; no real account is created.
 
 ## Implementation order
 

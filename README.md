@@ -41,11 +41,15 @@ Desktop-first scope. No drag-and-drop, custom recurrence, separate calendar even
 ## Supabase setup
 
 1. Create a Supabase project. Run [0001_companion.sql](supabase/migrations/0001_companion.sql) once in its SQL Editor, or apply it using the Supabase CLI. This creates the table, owner-only read policy, and validated write function; do not disable RLS or grant direct table writes.
-2. Copy [`.env.example`](.env.example) to `.env.local`. Set `VITE_SUPABASE_URL` to the project URL and `VITE_SUPABASE_PUBLISHABLE_KEY` to its **publishable** key. Legacy `VITE_SUPABASE_ANON_KEY` also works. Never use `service_role` or secret keys: Vite embeds these values in public browser code.
+2. Copy [`.env.example`](.env.example) to `.env.local`. Set `VITE_SUPABASE_URL` to the **project origin**, such as `https://<project-ref>.supabase.co`, not a Data API endpoint ending in `/rest/v1/` or an Auth endpoint. Set `VITE_SUPABASE_PUBLISHABLE_KEY` to its **publishable** key. Legacy `VITE_SUPABASE_ANON_KEY` also works. Never use `service_role` or secret keys: Vite embeds these values in public browser code.
 3. In Supabase Authentication, enable Email/password. Set the Site URL and allowed redirect URLs to your app origins, including `http://localhost:5173` for local development and your production origin. With email confirmation enabled, signup asks users to confirm email before login.
 4. Run `npm install` and `npm run dev`. Create an account, confirm email if required, then log in. Set the same public environment variables in your deployment build and rebuild after changing them.
 
-Missing configuration displays a setup message rather than silently using browser storage. Logout is blocked while saves are pending; failed saves offer retry and JSON export. Logout affects this browser session only. If another tab logs out or changes accounts, the previous workspace stays visible but read-only so you can export unsaved changes before continuing.
+Missing or invalid configuration displays setup instructions before any auth request. HTTPS project origins (including custom domains) are supported; HTTP is limited to `localhost`, `127.0.0.1`, and `[::1]` for local Supabase. An exact `/rest/v1` or `/rest/v1/` suffix is normalized to the origin; other paths, URL credentials, queries, and fragments are rejected. A public key's validity still requires Supabase to check it.
+
+For Vercel, set `VITE_SUPABASE_URL` to `https://<project-ref>.supabase.co` and the matching public key in the environment used by the deployment, then **redeploy**: Vite embeds configuration at build time. Changing only a key cannot fix a bad URL. Before this fix, a Data API URL produced `/rest/v1/auth/v1/signup`; PostgREST returned `404 PGRST125: Invalid path specified in request URL`. The normalized request uses `/auth/v1/signup`. No database migration or RLS change is needed. After deployment, verify signup with an authorized test account in both email-confirmation modes as applicable; mocked tests and read-only health probes do not verify real account creation or email delivery.
+
+Logout is blocked while saves are pending; failed saves offer retry and JSON export. Logout affects this browser session only. If another tab logs out or changes accounts, the previous workspace stays visible but read-only so you can export unsaved changes before continuing.
 
 ## Development
 
@@ -56,7 +60,7 @@ npm test
 npm run build
 ```
 
-`npm test` runs checks for local dates, habit undo/reset, schema validation, source-preserving import, serialized cloud saves, retry IDs, conflicts, and account disposal. `npm run build` typechecks and builds production artifacts. Browser checks use mocked Supabase HTTP routes (no real credentials) and Playwright's Chromium:
+`npm test` runs checks for Supabase configuration/request paths, local dates, habit undo/reset, schema validation, source-preserving import, serialized cloud saves, retry IDs, conflicts, and account disposal. `npm run build` typechecks and builds production artifacts. Browser checks use mocked Supabase HTTP routes (no real credentials) and Playwright's Chromium:
 
 ```sh
 npx playwright install chromium
@@ -66,7 +70,7 @@ VITE_SUPABASE_URL=https://test.supabase.co VITE_SUPABASE_PUBLISHABLE_KEY=test-pu
 npm run test:browser
 ```
 
-Set `APP_URL` to test a different running app URL.
+Set `APP_URL` to test a different running app URL. Browser checks cover immediate-session signup, confirmation-required signup, login, restored/refreshed sessions, and DailyTask/TodoItem/DailyNote isolation. To replay issue #17 specifically, start Vite with `VITE_SUPABASE_URL=https://test.supabase.co/rest/v1/` and the same mock public key, then run `APP_URL=http://127.0.0.1:5173 node tests/signup-path.test.mjs`. The mocked gateway returns the exact reported `PGRST125` error for a malformed signup path; no real account is created.
 
 ## Implementation order
 

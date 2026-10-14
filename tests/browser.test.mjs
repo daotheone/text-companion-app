@@ -18,12 +18,12 @@ const rows = new Map(users.map((user, index) => [user.id, {
   version: 1,
   lastWriteId: null,
   data: {
-    dailyTasks: [],
+    dailyTasks: [{ id: `habit-${index}`, title: index ? 'Bob private habit' : 'Alice private habit', isCompleted: false, lastCompletedDate: null, completionHistory: [] }],
     todos: [{ id: `seed-${index}`, title: index ? 'Bob cloud task' : 'Alice cloud task', isCompleted: false, createdAt: new Date('2024-02-29T12:00:00-08:00').getTime() }],
     notes: { '2024-02-29': index ? 'Bob private note' : 'Alice private note' },
   },
 }]));
-const mock = { loads: [], writes: [], passwordRequests: [], refreshes: 0, signups: 0, logouts: 0, inFlight: 0, maxInFlight: 0, nextSave: null };
+const mock = { loads: [], writes: [], passwordRequests: [], refreshes: 0, signups: 0, signupSession: false, logouts: 0, inFlight: 0, maxInFlight: 0, nextSave: null };
 const conflict = 'Data changed in another tab or device. Export your changes before reloading.';
 const json = (route, body, status = 200) => route.fulfill({ status, json: body, headers: { 'access-control-allow-origin': '*' } });
 const save = (body, user) => {
@@ -49,10 +49,11 @@ await page.route('https://test.supabase.co/**', async route => {
     assert.equal(request.headers().apikey, 'test-public-key');
     const body = request.postDataJSON();
     if (url.pathname === '/auth/v1/signup') {
-      assert.equal(body.email, 'new@example.com');
+      assert.equal(body.email, mock.signupSession ? users[0].email : 'new@example.com');
       assert.equal(body.password, password);
+      assert.equal(url.searchParams.get('redirect_to'), new URL(process.env.APP_URL || 'http://127.0.0.1:5173').origin);
       mock.signups++;
-      await json(route, { ...users[0], id: '33333333-3333-4333-8333-333333333333', email: body.email, identities: [] });
+      await json(route, mock.signupSession ? session(users[0]) : { ...users[0], id: '33333333-3333-4333-8333-333333333333', email: body.email, identities: [] });
       return;
     }
     if (url.pathname === '/auth/v1/token') {
@@ -149,9 +150,24 @@ try {
   assert.equal(mock.signups, 1);
   assert.equal(await page.getByLabel('Password', { exact: true }).inputValue(), '');
   assert.equal(await page.locator('.sidebar').count(), 0);
-  await page.getByRole('button', { name: '[Back to log in]', exact: true }).click();
+  assert.equal(await page.evaluate(key => localStorage.getItem(key), sessionKey), null);
+  assert.equal(mock.loads.length, 0, 'Confirmation-required signup must not open a workspace');
+  mock.signupSession = true;
+  await page.getByLabel('Email', { exact: true }).fill(users[0].email);
+  await page.getByLabel('Password', { exact: true }).fill(password);
+  await page.getByRole('button', { name: '[Create account]', exact: true }).click();
+  await saved();
+  assert.equal(mock.signups, 2);
+  assert.equal(mock.passwordRequests.length, 1, 'Immediate signup must open workspace without password login');
+  assert.equal(await page.getByRole('status').filter({ hasText: 'Check your email' }).count(), 0);
+  await page.reload();
+  await saved();
+  assert.equal(mock.passwordRequests.length, 1, 'Signup session must persist across reload');
+  await logout();
   await login(users[0]);
   await page.getByRole('checkbox', { name: 'Alice cloud task', exact: true }).waitFor();
+  await page.getByRole('checkbox', { name: 'Alice private habit', exact: true }).waitFor();
+  assert.equal(await page.getByRole('checkbox', { name: 'Bob private habit', exact: true }).count(), 0);
   await noteDate.fill('2024-02-29');
   assert.equal(await note.inputValue(), 'Alice private note');
   const passwordRequests = mock.passwordRequests.length;
@@ -177,11 +193,14 @@ try {
   await login(users[1]);
   await page.getByRole('checkbox', { name: 'Bob cloud task', exact: true }).waitFor();
   assert.equal(await page.getByRole('checkbox', { name: 'Alice cloud task', exact: true }).count(), 0);
+  await page.getByRole('checkbox', { name: 'Bob private habit', exact: true }).waitFor();
+  assert.equal(await page.getByRole('checkbox', { name: 'Alice private habit', exact: true }).count(), 0);
   await noteDate.fill('2024-02-29');
   assert.equal(await note.inputValue(), 'Bob private note');
   await logout();
   await login(users[0]);
   assert.equal(await page.getByRole('checkbox', { name: 'Bob cloud task', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('checkbox', { name: 'Bob private habit', exact: true }).count(), 0);
   assert.ok(mock.loads.includes(users[0].id) && mock.loads.includes(users[1].id));
 
   assert.equal(await page.locator('.sidebar').evaluate(el => el.getBoundingClientRect().width), 320);
@@ -386,7 +405,7 @@ try {
   await page.getByRole('button', { name: /Thursday, February 29, 2024/ }).click();
   await panel.getByText('Midnight habit', { exact: true }).waitFor();
   await logout();
-  assert.equal(mock.logouts, 3);
+  assert.equal(mock.logouts, 4);
 
   await login(users[0]);
   const externalDate = await noteDate.inputValue();

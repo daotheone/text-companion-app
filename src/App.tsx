@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { addDays, addMonths, addWeeks, format, startOfMonth } from 'date-fns';
 import type { AppData, DailyTask, TodoItem } from './types';
-import { loadData, resetDailyTasks, saveData, toggleHabit } from './data/storage';
+import { readBrowserData, resetDailyTasks, toggleHabit } from './data/storage';
+import { CloudWriter, loadCloud, saveCloud } from './data/cloud';
+import { supabase } from './data/supabase';
 import { formatDate, getMonthGrid, getWeekGrid, parseDate } from './utils/calendar';
 import Modal from './components/Modal';
 
@@ -9,12 +11,16 @@ const GREETINGS = ['Hello', 'Hi there', 'Good to see you', 'Welcome back'];
 const randomGreeting = () => GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
 const emptyData = (): AppData => ({ dailyTasks: [], todos: [], notes: {} });
 
-export default function App() {
+export default function App({ userId, email, authenticated, onLeave }: { userId: string; email: string; authenticated: boolean; onLeave: (signedOut?: boolean) => void }) {
   const [data, setData] = useState<AppData>(emptyData);
   const current = useRef(data);
-  const pending = useRef<AppData | null>(null);
+  const writer = useRef<CloudWriter | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
+  const [saveState, setSaveState] = useState('Loading…');
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [importAvailable, setImportAvailable] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [today, setToday] = useState(() => formatDate(new Date()));
   const [cursor, setCursor] = useState(() => new Date());
   const [view, setView] = useState<'month' | 'week'>('month');
@@ -40,50 +46,86 @@ export default function App() {
   const [editTitle, setEditTitle] = useState('');
   const [editError, setEditError] = useState('');
 
-  const showError = (cause: unknown) => setError(`${cause instanceof Error ? cause.message : 'Storage unavailable'}. Changes not saved; keep this tab open and retry.`);
+  const showError = (cause: unknown) => setError(`${cause instanceof Error ? cause.message : 'Cloud unavailable'}. Changes not saved; keep this tab open and retry. If another tab changed data, export your changes before reloading.`);
   const commit = (next: AppData) => {
-    try {
-      saveData(window.localStorage, next);
-      current.current = next;
-      pending.current = null;
-      setData(next);
-      if (!draft.current.dirty) setError('');
-      return true;
-    } catch (cause) {
-      pending.current = next;
-      current.current = next; // Keep later actions based on the retained working snapshot.
-      showError(cause);
-      return false;
-    }
+    if (!ready || !writer.current || !authenticated || loggingOut) return false;
+    current.current = next;
+    setData(next);
+    writer.current.queue(next);
+    return true; // Accepted locally; Saved appears only after cloud acknowledgement.
   };
-  const reload = () => {
-    try {
-      const loaded = loadData(window.localStorage, formatDate(new Date()));
-      current.current = loaded;
-      setData(loaded);
-      if (!draft.current.dirty) {
-        const content = loaded.notes[draft.current.date] ?? '';
-        draft.current.content = content;
-        setNoteDraft(content);
-      }
-      setReady(true);
-      setError('');
-    } catch (cause) { showError(cause); }
-  };
-  useEffect(reload, []);
+  useEffect(() => {
+    if (!supabase) return;
+    const client = supabase;
+    let active = true;
+    let ownedWriter: CloudWriter | null = null;
+    setReady(false);
+    loadCloud(client, userId, formatDate(new Date())).then(loaded => {
+      if (!active) return;
+      current.current = loaded.data;
+      setData(loaded.data);
+      const content = loaded.data.notes[draft.current.date] ?? '';
+      draft.current = { ...draft.current, content, dirty: false };
+      setNoteDraft(content);
+      ownedWriter = new CloudWriter(loaded.version, (data, version, id) => saveCloud(client, userId, data, version, id), () => {
+        if (!active || !ownedWriter) return;
+        if (ownedWriter.error) { showError(new Error(ownedWriter.error)); setSaveState('Not saved'); }
+        else { setError(''); setSaveState(ownedWriter.dirty ? 'Saving…' : 'Saved to Supabase'); }
+        if (!ownedWriter.dirty) draft.current.dirty = false;
+        if (ownedWriter.version > 0) setImportAvailable(false);
+      });
+      writer.current = ownedWriter;
+      setImportAvailable(loaded.version === 0);
+      setReady(true); setError(''); setSaveState('Saved to Supabase');
+    }).catch(cause => { if (active) { showError(cause); setSaveState('Load failed'); } });
+    return () => {
+      active = false;
+      if (ownedWriter) ownedWriter.disposed = true;
+      writer.current = null;
+    };
+  }, [userId, loadAttempt]);
 
   const flushNote = () => {
     if (!draft.current.dirty) return true;
     if (!ready) return false;
     const { date, content } = draft.current;
-    const base = pending.current ?? current.current;
-    const notes = { ...base.notes };
+    const notes = { ...current.current.notes };
     if (content) notes[date] = content;
     else delete notes[date];
-    if (!commit({ ...base, notes })) return false;
-    draft.current.dirty = false;
-    setError('');
-    return true;
+    if (current.current.notes[date] !== notes[date]) commit({ ...current.current, notes });
+    else if (!writer.current?.dirty) draft.current.dirty = false;
+    return !writer.current?.error;
+  };
+  const signOut = async () => {
+    if (!supabase || loggingOut || !authenticated) return;
+    if (draft.current.dirty || writer.current?.dirty) {
+      setError('Unsaved changes. Retry save or export your changes before logging out.');
+      return;
+    }
+    setLoggingOut(true);
+    try {
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error) throw error;
+      onLeave(true);
+    } catch (cause) { showError(cause); }
+    finally { setLoggingOut(false); }
+  };
+  const importBrowser = () => {
+    if (!ready || !authenticated || loggingOut || writer.current?.dirty || writer.current?.version !== 0) return;
+    if (!window.confirm('Import this browser’s old habits, tasks, and notes into this account? The original browser data will remain unchanged.')) return;
+    try {
+      const imported = readBrowserData(window.localStorage, formatDate(new Date()));
+      draft.current = { date: noteDate, content: imported.notes[noteDate] ?? '', dirty: false };
+      setNoteDraft(draft.current.content);
+      commit(imported);
+      setImportAvailable(false);
+    } catch (cause) { showError(cause); }
+  };
+  const exportChanges = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(current.current, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = 'text-companion-backup.json'; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   useEffect(() => {
     let midnight: ReturnType<typeof setTimeout>;
@@ -113,7 +155,7 @@ export default function App() {
     document.addEventListener('visibilitychange', visibility);
     window.addEventListener('focus', checkDay);
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (draft.current.dirty) { event.preventDefault(); event.returnValue = ''; }
+      if (draft.current.dirty || writer.current?.dirty) { event.preventDefault(); event.returnValue = ''; }
     };
     window.addEventListener('beforeunload', beforeUnload);
     return () => {
@@ -123,7 +165,7 @@ export default function App() {
       window.removeEventListener('focus', checkDay);
       window.removeEventListener('beforeunload', beforeUnload);
     };
-  }, [ready]);
+  }, [ready, authenticated, loggingOut]);
 
   const incomplete = data.dailyTasks.filter(task => !task.isCompleted);
   const activeHabit = incomplete[cycle % (incomplete.length || 1)];
@@ -154,20 +196,13 @@ export default function App() {
     addId.current = crypto.randomUUID();
     setAddTitle(''); setAddType('todo'); setAddDate(date); setFormError(''); setAdding(true);
   };
-  const cancelAdd = () => {
-    const discard = (value: AppData) => ({ ...value, dailyTasks: value.dailyTasks.filter(task => task.id !== addId.current), todos: value.todos.filter(todo => todo.id !== addId.current) });
-    current.current = discard(current.current);
-    if (pending.current) pending.current = discard(pending.current);
-    setAdding(false);
-  };
+  const cancelAdd = () => setAdding(false);
   const submitAdd = (event: FormEvent) => {
     event.preventDefault();
     if (!addTitle.trim()) { setFormError('Enter a title.'); return; }
     try {
-      const base = { ...current.current, dailyTasks: current.current.dailyTasks.filter(task => task.id !== addId.current), todos: current.current.todos.filter(todo => todo.id !== addId.current) };
-      current.current = base;
-      const saved = add(addTitle, addType, addDate, addId.current);
-      if (saved) { setAdding(false); setAddTitle(''); }
+      const accepted = add(addTitle, addType, addDate, addId.current);
+      if (accepted) { setAdding(false); setAddTitle(''); }
       else setFormError('Could not save. Your item is retained; press Add to retry.');
     } catch { setFormError('Choose a valid date.'); }
   };
@@ -191,13 +226,13 @@ export default function App() {
     if (commit(next)) setEditing(null);
   };
   const renderDetailItem = (type: 'habit' | 'todo', item: DailyTask | TodoItem) => <li key={item.id}>
-    {editing?.type === type && editing.id === item.id ? <form onSubmit={saveEdit}>
+    {editing?.type === type && editing.id === item.id ? <form onSubmit={saveEdit}><fieldset disabled={loggingOut || !authenticated}>
       <label>Title<input autoFocus value={editTitle} onChange={event => setEditTitle(event.target.value)} required /></label>
       {editError && <p role="alert">{editError}</p>}
       <button type="submit">[Save]</button><button type="button" onClick={() => setEditing(null)}>[Cancel]</button>
-    </form> : <><span>{item.title}</span><div className="item-actions">
-      <button aria-label={`Edit ${item.title}`} onClick={() => startEdit(type, item)}>[edit]</button>
-      <button aria-label={`Delete ${item.title}`} onClick={() => remove(type, item.id)}>[delete]</button>
+    </fieldset></form> : <><span>{item.title}</span><div className="item-actions">
+      <button disabled={loggingOut || !authenticated} aria-label={`Edit ${item.title}`} onClick={() => startEdit(type, item)}>[edit]</button>
+      <button disabled={loggingOut || !authenticated} aria-label={`Delete ${item.title}`} onClick={() => remove(type, item.id)}>[delete]</button>
     </div></>}
   </li>;
   const closePanel = () => { setSelected(null); setEditing(null); dayTrigger.current?.focus(); };
@@ -208,8 +243,11 @@ export default function App() {
     <a className="skip-link" href="#calendar">Skip to calendar</a>
     <aside className="sidebar" aria-label="Daily companion">
       <header className="brand"><h1>text companion</h1><p>A little room for your day.</p></header>
-      {error && <div className="storage-error" role="alert"><p>{error}</p><button onClick={() => { if (!ready) reload(); else if (draft.current.dirty) flushNote(); else commit(pending.current ?? current.current); }}>[Retry save]</button></div>}
-      <fieldset disabled={!ready} className="sidebar-content">
+      <div className="account"><p className="muted">{email}</p><button disabled={loggingOut || !authenticated} onClick={signOut}>[Log out]</button>{importAvailable && <button disabled={!ready || !authenticated || loggingOut || Boolean(writer.current?.dirty)} onClick={importBrowser}>[Import browser data]</button>}</div>
+      {!authenticated && <div className="storage-error" role="alert"><p>Session changed. Your changes remain in this tab. Export them before continuing to log in.</p><button onClick={exportChanges}>[Export changes]</button><button onClick={() => { if ((!writer.current?.dirty && !draft.current.dirty) || window.confirm('Discard unsaved changes in this tab and continue? Export them first if you want to keep them.')) onLeave(); }}>[Continue to log in]</button></div>}
+      {!ready && !error && <p role="status">Loading your data…</p>}
+      {error && <div className="storage-error" role="alert"><p>{error}</p><button disabled={!authenticated || loggingOut} onClick={() => { if (!ready) setLoadAttempt(value => value + 1); else writer.current?.retry(); }}>{ready ? '[Retry save]' : '[Retry load]'}</button>{ready && <button onClick={exportChanges}>[Export changes]</button>}</div>}
+      <fieldset disabled={!ready || loggingOut || !authenticated} className="sidebar-content">
         <details open><summary>Companion</summary><div className="section-content">
           <p className="companion-prompt" aria-live="polite">{prompt}</p>
           {(activeHabit || activeTodo) && <div className="actions">
@@ -246,7 +284,7 @@ export default function App() {
           <label className="sr-only" htmlFor="daily-note">Daily note</label><textarea id="daily-note" placeholder="A thought worth keeping…" value={noteDraft} onChange={event => {
             setNoteDraft(event.target.value); draft.current = { date: noteDate, content: event.target.value, dirty: true }; flushNote();
           }} />
-          <div className="actions"><button onClick={() => { if (flushNote()) setAllNotes(true); }}>[All notes]</button><span className="muted" role="status">{draft.current.dirty ? 'Not saved' : 'Saved locally'}</span></div>
+          <div className="actions"><button onClick={() => { if (flushNote()) setAllNotes(true); }}>[All notes]</button><span className="muted" role="status">{saveState}</span></div>
         </div></details>
         <button className="add-item" aria-label="Add item" onClick={() => openAdd(formatDate(new Date()))}>[+ add]</button>
       </fieldset>
@@ -283,16 +321,16 @@ export default function App() {
         {!data.todos.some(todo => formatDate(new Date(todo.createdAt)) === selected) && <p className="muted">No tasks for this day.</p>}
         <h3>Note</h3><p className="note-preview">{data.notes[selected] || 'No note for this day.'}</p>
         <p className="muted">Notes edited in sidebar. Habit edits and deletes apply to all dates.</p>
-        <button disabled={!ready} aria-label="Add item for selected day" onClick={() => openAdd(selected)}>[+ add]</button>
+        <button disabled={!ready || loggingOut || !authenticated} aria-label="Add item for selected day" onClick={() => openAdd(selected)}>[+ add]</button>
       </aside>}
     </main>
-    {adding && <Modal title="Add item" onClose={cancelAdd}><form onSubmit={submitAdd}>
+    {adding && <Modal title="Add item" onClose={cancelAdd}><form onSubmit={submitAdd}><fieldset disabled={loggingOut || !authenticated}>
       <label>Title<input autoFocus value={addTitle} onChange={event => setAddTitle(event.target.value)} required /></label>
       <label htmlFor="add-type">Type</label><select id="add-type" value={addType} onChange={event => setAddType(event.target.value === 'habit' ? 'habit' : 'todo')}><option value="todo">To-Do</option><option value="habit">Daily Habit</option></select>
       {addType === 'todo' ? <label>Date<input type="date" value={addDate} onChange={event => setAddDate(event.target.value)} required /></label> : <p className="muted">Daily habits repeat each day. Complete them to record a date.</p>}
       {formError && <p role="alert">{formError}</p>}
       <div className="actions"><button type="submit">[Add]</button><button type="button" onClick={cancelAdd}>[Cancel]</button></div>
-    </form></Modal>}
+    </fieldset></form></Modal>}
     {allNotes && <Modal title="All notes" onClose={() => setAllNotes(false)}><ul className="all-notes">
       {Object.entries(data.notes).filter(([, content]) => content).sort(([a], [b]) => b.localeCompare(a)).map(([date, content]) => <li key={date}><button onClick={() => { if (changeNoteDate(date)) setAllNotes(false); }}><time dateTime={date}>{date}</time><span>{content.slice(0, 140)}</span></button></li>)}
       {!Object.values(data.notes).some(Boolean) && <li className="muted">No notes yet. Write your first thought in the sidebar.</li>}

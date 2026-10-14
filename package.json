@@ -11,6 +11,7 @@
     "test:browser": "node tests/browser.test.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.3",
     "date-fns": "^4.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

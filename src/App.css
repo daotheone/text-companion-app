@@ -30,6 +30,12 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .sidebar { display: flex; flex-direction: column; gap: 24px; border-right: 1px solid var(--line); padding: 30px 24px; overflow-y: auto; }
 .brand h1 { font-size: 1.35rem; letter-spacing: -.025em; }
 .brand p { color: var(--muted); font-size: .82rem; margin-top: 4px; }
+.auth-screen { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
+.auth-panel { width: min(100%, 380px); display: flex; flex-direction: column; gap: 20px; }
+.auth-panel fieldset { display: flex; flex-direction: column; gap: 12px; }
+.auth-panel h2 { font-size: 1.8rem; }
+.account { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.account p { width: 100%; overflow-wrap: anywhere; }
 .sidebar-content { display: flex; flex-direction: column; flex: 1; }
 details { border-top: 1px solid var(--line); padding: 14px 0; }
 summary { cursor: pointer; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; }
@@ -83,7 +89,7 @@ summary::marker { font-size: .7rem; color: var(--muted); }
 dialog { width: min(480px, calc(100vw - 48px)); max-height: 80dvh; padding: 28px; border: 1px solid var(--line); background: #fcfbf9; color: #1a1a1a; overflow-y: auto; }
 dialog::backdrop { background: rgb(26 26 26 / .28); }
 dialog h2 { font-size: 1.5rem; }
-dialog form, .detail-list form { display: flex; flex-direction: column; gap: 16px; }
+dialog form, dialog form fieldset, .detail-list form, .detail-list form fieldset { display: flex; flex-direction: column; gap: 16px; }
 dialog label, .detail-list form label { display: flex; flex-direction: column; gap: 6px; }
 .all-notes li + li { margin-top: 16px; }
 .all-notes button { display: flex; flex-direction: column; gap: 8px; width: 100%; text-align: left; overflow-wrap: anywhere; padding: 12px; }

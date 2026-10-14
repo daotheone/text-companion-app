@@ -1,0 +1,7 @@
+# ADR 0004: Supabase authentication and per-user snapshots
+
+Supabase replaces local-only persistence from [ADR 0002](0002-data-storage.md), providing email/password accounts and cloud data while retaining the existing local-day and habit-history contract. Store one private JSONB snapshot per user rather than separate entity tables: the app already edits an `AppData` snapshot, and one transactional write avoids partial habit/todo/note saves.
+
+Owner-only SELECT RLS and a restricted write RPC protect account isolation. The RPC derives the owner from the authenticated identity, validates payloads, compares versions atomically, and recognizes an identical request ID after a lost acknowledgement. Clients serialize writes and never adopt a newer version to retry a stale snapshot; conflicts retain working data and offer JSON export before reload. Direct browser table writes are not granted.
+
+Legacy browser data imports only by explicit confirmation into an account with no cloud row, using the same version check. Migration runs on an in-memory copy; original browser keys remain unchanged. Session tokens persist through the Supabase client, not application records. Offline edits remain in memory with an unsaved warning; there is no durable offline queue or realtime merge. Normalize tables and introduce reconciliation only when partial synchronization or larger datasets require them; snapshots are limited to 1 MiB.

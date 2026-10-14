@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { formatDate, parseDate, getMonthGrid, getWeekGrid } from '../src/utils/calendar.ts';
-import { loadData, saveData, toggleHabit, resetDailyTasks } from '../src/data/storage.ts';
+import { loadData, saveData, toggleHabit, resetDailyTasks, readBrowserData, parseAppData } from '../src/data/storage.ts';
+import { CloudWriter } from '../src/data/cloud.ts';
 import { STORAGE_KEYS } from '../src/data/storageKeys.ts';
 import type { AppData, DailyTask } from '../src/types/index.ts';
 
@@ -199,4 +200,112 @@ test('storage read and migration journal write errors propagate without destroyi
   const before = new Map(storage.values);
   assert.throws(() => loadData(storage, '2024-02-29'), /Storage write failed/);
   assert.deepEqual(storage.values, before);
+});
+
+test('browser import migrates a copy and never changes source keys', () => {
+  const storage = new MemoryStorage({
+    [STORAGE_KEYS.NOTE]: 'Legacy',
+    [STORAGE_KEYS.DAILY_NOTES]: JSON.stringify({ '2024-02-29': 'Existing' }),
+  });
+  const before = new Map(storage.values);
+  assert.equal(readBrowserData(storage, '2024-02-29').notes['2024-02-29'], 'Existing\n\nLegacy');
+  assert.deepEqual(readBrowserData(storage, '2024-02-29'), readBrowserData(storage, '2024-02-29'));
+  assert.deepEqual(storage.values, before);
+  assert.throws(() => parseAppData({ dailyTasks: [], todos: [], notes: { '2024-02-30': 'Invalid' } }, '2024-02-29'));
+  assert.throws(() => parseAppData(null, '2024-02-29'));
+});
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (cause: Error) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+};
+const settled = () => new Promise<void>(resolve => setImmediate(resolve));
+
+test('cloud writer serializes writes and coalesces newest edits without stale saved state', async () => {
+  const requests: { data: AppData; version: number; response: ReturnType<typeof deferred<number>> }[] = [];
+  let reportedDirty = false;
+  const writer = new CloudWriter(3, (data, version) => {
+    const response = deferred<number>();
+    requests.push({ data, version, response });
+    return response.promise;
+  }, () => { reportedDirty = writer.dirty; });
+  const first = { ...emptyData, notes: { '2024-02-29': 'First' } };
+  const latest = { ...emptyData, notes: { '2024-02-29': 'Latest' } };
+  writer.queue(first);
+  writer.queue({ ...first, notes: { '2024-02-29': 'Intermediate' } });
+  writer.queue(latest);
+  assert.equal(requests.length, 1);
+  assert.equal(reportedDirty, true);
+  requests[0].response.resolve(4);
+  await settled();
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].version, 4);
+  assert.equal(requests[1].data, latest);
+  assert.equal(reportedDirty, true);
+  requests[1].response.resolve(5);
+  await settled();
+  assert.equal(writer.version, 5);
+  assert.equal(reportedDirty, false);
+});
+
+test('failed or ambiguous cloud save retains request ID and version for safe retry', async () => {
+  const requests: { data: AppData; version: number; id: string }[] = [];
+  let fail = true;
+  const writer = new CloudWriter(0, async (data, version, id) => {
+    requests.push({ data, version, id });
+    if (fail) throw new Error('Connection lost');
+    return version + 1;
+  }, () => {});
+  writer.queue(emptyData);
+  await settled();
+  const latest = { ...emptyData, notes: { '2024-02-29': 'Newer unsaved draft' } };
+  writer.queue(latest);
+  await settled();
+  assert.equal(requests.length, 1);
+  assert.equal(writer.dirty, true);
+  assert.equal(writer.version, 0);
+  assert.match(writer.error, /Connection lost/);
+  fail = false;
+  writer.retry();
+  await settled();
+  assert.deepEqual(requests[1], requests[0]);
+  assert.equal(requests[2].data, latest);
+  assert.equal(requests[2].version, 1);
+  assert.equal(writer.version, 2);
+  assert.equal(writer.dirty, false);
+});
+
+test('cloud conflict never adopts a fresh version or overwrites remote data', async () => {
+  let calls = 0;
+  const writer = new CloudWriter(9, async (_data, version) => {
+    assert.equal(version, 9);
+    calls++;
+    throw new Error('Data changed in another tab');
+  }, () => {});
+  writer.queue(emptyData);
+  await settled();
+  writer.queue({ ...emptyData, notes: { '2024-02-29': 'Keep this' } });
+  assert.equal(calls, 1);
+  writer.retry();
+  await settled();
+  assert.equal(calls, 2);
+  assert.equal(writer.version, 9);
+  assert.equal(writer.dirty, true);
+});
+
+test('disposed account writer stops queued work and stale UI notifications', async () => {
+  const response = deferred<number>();
+  let calls = 0;
+  let notifications = 0;
+  const writer = new CloudWriter(0, () => { calls++; return response.promise; }, () => { notifications++; });
+  writer.queue(emptyData);
+  writer.queue({ ...emptyData, notes: { '2024-02-29': 'Queued' } });
+  writer.disposed = true;
+  const previousNotifications = notifications;
+  response.resolve(1);
+  await settled();
+  assert.equal(calls, 1);
+  assert.equal(notifications, previousNotifications);
 });

@@ -2,3 +2,5 @@ node_modules/
 dist/
 .agents/
 .scratch/
+.env*
+!.env.example

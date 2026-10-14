@@ -1,6 +1,6 @@
 # Text Companion App
 
-Minimalist, typography-first productivity app built with Vite, React, and TypeScript. Data stays in browser `localStorage`; no accounts or backend.
+Minimalist, typography-first productivity app built with Vite, React, and TypeScript. Email/password login uses Supabase Auth; habits, tasks, and notes persist privately per user in Supabase Postgres.
 
 ## Product
 
@@ -19,14 +19,16 @@ A fixed 320px sidebar holds four initially expanded, collapsible sections:
 
 | Domain concept | Attributes | Persistence |
 | --- | --- | --- |
-| `DailyTask` | `id`, `title`, `isCompleted`, `lastCompletedDate`, `completionHistory: string[]` | JSON array at `text-companion-daily-tasks` |
-| `TodoItem` | `id`, `title`, `isCompleted`, `createdAt: number` | JSON array at `text-companion-todo-items` |
-| `DailyNote` | `date`, `content` | `Record<string, string>` mapping date to content at `text-companion-daily-notes` |
-| `Note` | Legacy single scratchpad | Raw text at `text-companion-note`, migrated once |
+| `DailyTask` | `id`, `title`, `isCompleted`, `lastCompletedDate`, `completionHistory: string[]` | `companion_data.data.dailyTasks` JSON array |
+| `TodoItem` | `id`, `title`, `isCompleted`, `createdAt: number` | `companion_data.data.todos` JSON array |
+| `DailyNote` | `date`, `content` | `companion_data.data.notes` date/content object |
+| `Note` | Legacy single scratchpad | Explicit browser import only |
 
 All date keys use validated local `YYYY-MM-DD`, never UTC serialization. Month indices are zero-based; weeks start Monday. `completionHistory` contains unique local day strings. `isCompleted` reflects whether today is in history; `lastCompletedDate` is the latest history date or `null`. A midnight timer and initialization/focus/visibility/periodic checks refresh today's state, including after timezone changes. Stored history strings remain unchanged when timezone changes.
 
-On load, validate stored shapes before changing them. Legacy habits missing history receive their valid `lastCompletedDate` as history; empty legacy dates normalize to `null`. Migrate raw legacy note into today's record entry. If both contents are nonempty, preserve existing content followed by a blank line and legacy content. Persist destination successfully before removing source; retry must not duplicate content, including after a crash between write and removal. Invalid data or storage failures retain original data and show a visible error with retry. Full storage/reset decision: [ADR 0002](docs/adr/0002-data-storage.md).
+Supabase owns one versioned snapshot per user, protected by row-level security. Writes are serialized and transactionally compare the last loaded version; request IDs make retry after a lost acknowledgement safe. “Saved to Supabase” appears only after acknowledgement. Invalid data and network failures never fall back to an empty saved snapshot. Unsaved work remains in this tab; retry or export changes before reloading. Conflicting edits from another tab/device require export and reload, not silent overwrite. Snapshots are limited to 1 MiB; no realtime merge or durable offline queue.
+
+A new account with no cloud row offers `[Import browser data]`. Confirm only for a browser containing your data. Import validates and migrates an in-memory copy of old `text-companion-*` keys, including legacy habit history and scratchpad text. Existing daily-note content is preserved before legacy text; original browser keys are never removed or changed. Import cannot replace an existing cloud row. Decisions: [ADR 0002](docs/adr/0002-data-storage.md) and [ADR 0004](docs/adr/0004-supabase.md).
 
 ## Interface and accessibility
 
@@ -34,7 +36,16 @@ Warm off-white background, charcoal text, generous spacing. No icons, heavy shad
 
 Use labeled native controls, keyboard-operable day buttons and collapse headers, visible focus, and descriptive previous/next labels. Modal dialogs have an accessible name, initial focus, focus containment, Escape/Close dismissal, and focus restoration to the opener. Respect reduced-motion preferences for panel transitions.
 
-Desktop-first scope. No drag-and-drop, custom recurrence, separate calendar events, day view, accounts, or server sync; existing daily habits still recur.
+Desktop-first scope. No drag-and-drop, custom recurrence, separate calendar events, or day view; existing daily habits still recur.
+
+## Supabase setup
+
+1. Create a Supabase project. Run [0001_companion.sql](supabase/migrations/0001_companion.sql) once in its SQL Editor, or apply it using the Supabase CLI. This creates the table, owner-only read policy, and validated write function; do not disable RLS or grant direct table writes.
+2. Copy [`.env.example`](.env.example) to `.env.local`. Set `VITE_SUPABASE_URL` to the project URL and `VITE_SUPABASE_PUBLISHABLE_KEY` to its **publishable** key. Legacy `VITE_SUPABASE_ANON_KEY` also works. Never use `service_role` or secret keys: Vite embeds these values in public browser code.
+3. In Supabase Authentication, enable Email/password. Set the Site URL and allowed redirect URLs to your app origins, including `http://localhost:5173` for local development and your production origin. With email confirmation enabled, signup asks users to confirm email before login.
+4. Run `npm install` and `npm run dev`. Create an account, confirm email if required, then log in. Set the same public environment variables in your deployment build and rebuild after changing them.
+
+Missing configuration displays a setup message rather than silently using browser storage. Logout is blocked while saves are pending; failed saves offer retry and JSON export. Logout affects this browser session only. If another tab logs out or changes accounts, the previous workspace stays visible but read-only so you can export unsaved changes before continuing.
 
 ## Development
 
@@ -45,11 +56,13 @@ npm test
 npm run build
 ```
 
-`npm test` runs focused checks for local dates, habit undo/reset, schema validation, and retry-safe migration. `npm run build` typechecks and builds production artifacts. Browser checks use Playwright's Chromium:
+`npm test` runs checks for local dates, habit undo/reset, schema validation, source-preserving import, serialized cloud saves, retry IDs, conflicts, and account disposal. `npm run build` typechecks and builds production artifacts. Browser checks use mocked Supabase HTTP routes (no real credentials) and Playwright's Chromium:
 
 ```sh
 npx playwright install chromium
-# With npm run dev running at http://127.0.0.1:5173:
+# Start Vite with mock public configuration in one terminal:
+VITE_SUPABASE_URL=https://test.supabase.co VITE_SUPABASE_PUBLISHABLE_KEY=test-public-key npm run dev -- --host 127.0.0.1
+# In another terminal:
 npm run test:browser
 ```
 

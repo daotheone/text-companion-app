@@ -1,7 +1,7 @@
 # ADR 0002: Data Storage and Midnight Reset
 
 ## Status
-Accepted; amended for the calendar feature. This decision supersedes the earlier underscore-key list and single-note/reset contract.
+Accepted for local-day/history semantics and legacy browser migration; local-only persistence superseded by [ADR 0004](0004-supabase.md). This decision supersedes the earlier underscore-key list and single-note/reset contract.
 
 ## Context
 Daily habits need persistent per-day completion history, and notes now belong to individual dates. Existing deployments store arrays and a raw-text scratchpad in browser `localStorage`. Migration must preserve that data without a backend or login.

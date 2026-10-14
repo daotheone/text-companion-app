@@ -55,6 +55,22 @@ function notesFrom(value: unknown): Record<string, string> {
   }));
 }
 
+export function parseAppData(value: unknown, today: string): AppData {
+  parseDate(today);
+  const data = record(value);
+  return { dailyTasks: dailyTasksFrom(data.dailyTasks, today), todos: todosFrom(data.todos), notes: notesFrom(data.notes) };
+}
+
+export function readBrowserData(storage: Pick<Storage, 'getItem'>, today: string): AppData {
+  // Run legacy migration on a copy so importing never changes its source.
+  const values = new Map(Object.values(STORAGE_KEYS).map(key => [key, storage.getItem(key)]));
+  return loadData({
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => { values.set(key, value); },
+    removeItem: key => { values.delete(key); },
+  }, today);
+}
+
 export function loadData(storage: LocalStorage, today: string): AppData {
   parseDate(today);
   const read = (key: string, fallback: unknown): unknown => {

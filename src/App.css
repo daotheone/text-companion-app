@@ -1,22 +1,41 @@
 :root {
-  color: #1a1a1a;
-  background: #fcfbf9;
+  color-scheme: light;
+  color: var(--text);
+  background: var(--page);
+  --text: #1a1a1a;
+  --page: #fcfbf9;
+  --focus: #44413b;
+  --error: #8c2525;
+  --backdrop: rgb(26 26 26 / .28);
   font-family: Georgia, 'Times New Roman', serif;
   font-synthesis: none;
   --muted: #66645f;
   --line: #dedbd3;
   --soft: #f1eee7;
 }
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --text: #eeeae2;
+  --page: #262522;
+  --focus: #d9cba9;
+  --error: #f0aaa0;
+  --backdrop: rgb(15 14 12 / .6);
+  --muted: #b9b3a8;
+  --line: #57534b;
+  --soft: #38352f;
+}
+.theme-control { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; font: .8rem ui-monospace, SFMono-Regular, Consolas, monospace; }
+.theme-control > p { grid-column: 1 / -1; }
 * { box-sizing: border-box; }
 body { margin: 0; line-height: 1.6; }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { background: transparent; border: 0; padding: .35rem .4rem; cursor: pointer; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .8rem; }
 button:hover { background: var(--soft); }
 button:disabled { opacity: .55; cursor: not-allowed; }
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid #44413b; outline-offset: 3px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 input, textarea, select { background: transparent; border: 1px solid var(--line); padding: .55rem; width: 100%; min-width: 0; border-radius: 0; }
 input::placeholder, textarea::placeholder { color: var(--muted); }
-input[type='checkbox'] { width: 14px; height: 14px; flex-shrink: 0; accent-color: #44413b; }
+input[type='checkbox'] { width: 14px; height: 14px; flex-shrink: 0; accent-color: var(--focus); }
 h1, h2, h3, p { margin: 0; }
 h1, h2, h3 { font-weight: normal; }
 ul { list-style: none; margin: 0; padding: 0; }
@@ -24,7 +43,7 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .muted { color: var(--muted); font-size: .82rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .focus-visible:focus { position: static; width: auto; height: auto; margin: 0; clip-path: none; }
-.skip-link { position: fixed; top: -100px; left: 16px; z-index: 20; padding: 12px; background: #fcfbf9; color: #1a1a1a; }
+.skip-link { position: fixed; top: -100px; left: 16px; z-index: 20; padding: 12px; background: var(--page); color: var(--text); }
 .skip-link:focus { top: 12px; }
 .app-shell { display: grid; grid-template-columns: 320px minmax(650px, 1fr); height: 100dvh; min-height: 600px; }
 .sidebar { display: flex; flex-direction: column; gap: 24px; border-right: 1px solid var(--line); padding: 30px 24px; overflow-y: auto; }
@@ -57,7 +76,7 @@ summary::marker { font-size: .7rem; color: var(--muted); }
 .note-navigation input { border: 0; font-size: .8rem; padding: 0; }
 .notes-section textarea { flex: 1; min-height: 160px; resize: vertical; border: 0; padding: 0; font-size: .95rem; line-height: 1.7; }
 .add-item { text-align: left; border-top: 1px solid var(--line); padding-top: 14px; }
-.storage-error { color: #8c2525; font-size: .85rem; padding: 12px; border: 1px solid #8c2525; overflow-wrap: anywhere; }
+.storage-error { color: var(--error); font-size: .85rem; padding: 12px; border: 1px solid var(--error); overflow-wrap: anywhere; }
 .calendar { position: relative; padding: 36px 40px 24px; display: flex; flex-direction: column; min-width: 0; overflow-y: auto; }
 .calendar-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 32px; }
 .calendar-toolbar h2 { font-size: 2.3rem; letter-spacing: -.04em; line-height: 1.4; }
@@ -77,7 +96,7 @@ summary::marker { font-size: .7rem; color: var(--muted); }
 .day-tasks { display: flex; flex-direction: column; gap: 5px; padding-top: 10px; width: 100%; font-size: .78rem; }
 .day-tasks > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .calendar-caption { margin-top: 16px; font-size: .75rem; color: var(--muted); }
-.detail-panel { position: absolute; right: 0; top: 0; bottom: 0; width: 320px; background: #fcfbf9; border-left: 1px solid var(--line); padding: 28px 24px; overflow-y: auto; animation: panel-in .15s ease-out; }
+.detail-panel { position: absolute; right: 0; top: 0; bottom: 0; width: 320px; background: var(--page); border-left: 1px solid var(--line); padding: 28px 24px; overflow-y: auto; animation: panel-in .15s ease-out; }
 .detail-panel header, dialog header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
 .detail-panel h2 { font-size: 1.3rem; }
 .detail-panel h3 { font-size: .75rem; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; text-transform: uppercase; letter-spacing: .05em; margin-top: 26px; margin-bottom: 12px; }
@@ -86,8 +105,8 @@ summary::marker { font-size: .7rem; color: var(--muted); }
 .item-actions button { color: var(--muted); padding-left: 0; font-size: .72rem; }
 .note-preview { white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 20px; }
 .detail-panel > button { margin-top: 20px; }
-dialog { width: min(480px, calc(100vw - 48px)); max-height: 80dvh; padding: 28px; border: 1px solid var(--line); background: #fcfbf9; color: #1a1a1a; overflow-y: auto; }
-dialog::backdrop { background: rgb(26 26 26 / .28); }
+dialog { width: min(480px, calc(100vw - 48px)); max-height: 80dvh; padding: 28px; border: 1px solid var(--line); background: var(--page); color: var(--text); overflow-y: auto; }
+dialog::backdrop { background: var(--backdrop); }
 dialog h2 { font-size: 1.5rem; }
 dialog form, dialog form fieldset, .detail-list form, .detail-list form fieldset { display: flex; flex-direction: column; gap: 16px; }
 dialog label, .detail-list form label { display: flex; flex-direction: column; gap: 6px; }

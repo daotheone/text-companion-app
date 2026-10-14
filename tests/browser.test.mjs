@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 // Server env: VITE_SUPABASE_URL=https://test.supabase.co VITE_SUPABASE_PUBLISHABLE_KEY=test-public-key.
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, timezoneId: 'America/Los_Angeles' });
+const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, timezoneId: 'America/Los_Angeles' });
+const page = await context.newPage();
 const errors = [];
 page.on('pageerror', error => errors.push(error.message));
 const users = [
@@ -61,6 +62,7 @@ await page.route('https://test.supabase.co/**', async route => {
         const user = users.find(user => body.refresh_token === `refresh-${user.id}`);
         assert.ok(user, 'Refresh token must belong to known user');
         mock.refreshes++;
+        if (mock.refreshGate) await mock.refreshGate;
         await json(route, session(user));
       } else {
         assert.equal(url.searchParams.get('grant_type'), 'password');
@@ -106,6 +108,45 @@ await page.route('https://test.supabase.co/**', async route => {
     await json(route, { message: error.message }, 500);
   }
 });
+const contrast = async (scope = page) => {
+  const failures = await scope.locator('body').evaluate(body => {
+    const rgb = color => color.match(/[\d.]+/g).map(Number);
+    const luminance = color => rgb(color).slice(0, 3).map(value => {
+      value /= 255;
+      return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+    }).reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
+    const ratio = (a, b) => (Math.max(luminance(a), luminance(b)) + .05) / (Math.min(luminance(a), luminance(b)) + .05);
+    const background = element => {
+      for (let current = element; current; current = current.parentElement) {
+        const color = getComputedStyle(current).backgroundColor;
+        if (rgb(color)[3] !== 0) return color;
+      }
+      return 'rgb(255, 255, 255)';
+    };
+    const failures = [];
+    for (const element of body.querySelectorAll('*')) {
+      if (!element.checkVisibility() || element.getBoundingClientRect().width < 2 || element.closest(':disabled') || element.matches('.sr-only, option')) continue;
+      const style = getComputedStyle(element);
+      const large = parseFloat(style.fontSize) >= 24 || (parseFloat(style.fontSize) >= 18.66 && Number(style.fontWeight) >= 700);
+      if ([...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()) || element.matches('input, textarea, select')) {
+        const actual = ratio(style.color, background(element));
+        if (actual < (large ? 3 : 4.5)) failures.push(`${element.className || element.tagName}: ${actual.toFixed(2)} ${style.color} on ${background(element)}`);
+      }
+      if (element.matches('input[placeholder], textarea[placeholder]')) {
+        const actual = ratio(getComputedStyle(element, '::placeholder').color, background(element));
+        if (actual < 4.5) failures.push(`placeholder: ${actual.toFixed(2)}`);
+      }
+      if (element.matches(':focus-visible')) {
+        if (style.outlineStyle === 'none' || parseFloat(style.outlineWidth) < 2 || ratio(style.outlineColor, background(element)) < 3) failures.push(`focus: ${element.tagName}`);
+      }
+    }
+    return failures;
+  });
+  assert.deepEqual(failures, [], 'Rendered text, placeholder and keyboard focus contrast meets WCAG AA');
+};
+const screenshot = async name => {
+  if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.SCREENSHOT_DIR}/${name}.png`, fullPage: true });
+};
 const status = text => page.getByRole('status').filter({ hasText: new RegExp(`^${text}$`) });
 const saved = () => status('Saved to Supabase').waitFor();
 const loginScreen = () => page.getByRole('heading', { name: 'Log in', exact: true }).waitFor();
@@ -135,11 +176,169 @@ const exportChanges = async (scope = page) => {
 };
 try {
   await page.goto(process.env.APP_URL || 'http://127.0.0.1:5173');
+  if (process.env.CONFIG_ONLY) {
+    await page.getByRole('alert').filter({ hasText: 'Supabase' }).waitFor();
+    const theme = page.getByRole('combobox', { name: 'Theme', exact: true });
+    for (const value of ['light', 'dark']) {
+      await theme.selectOption(value);
+      assert.equal(await theme.isEnabled(), true);
+      assert.equal(await page.locator('html').evaluate(el => getComputedStyle(el).colorScheme), value);
+      await contrast();
+      await screenshot(`configuration-${value}`);
+    }
+    assert.deepEqual(errors, []);
+    console.log('Theme: unconfigured shell selector and contrast passed in both themes.');
+  } else {
   await loginScreen();
+  const theme = page.getByRole('combobox', { name: 'Theme', exact: true });
+  const appearance = async expected => {
+    await page.waitForFunction(expected => getComputedStyle(document.documentElement).colorScheme === expected, expected);
+    const background = await page.locator('html').evaluate(el => getComputedStyle(el).backgroundColor);
+    assert.equal(background, expected === 'dark' ? 'rgb(38, 37, 34)' : 'rgb(252, 251, 249)');
+  };
+  assert.equal(await theme.count(), 1, 'Theme selector available before login');
+  assert.deepEqual(await theme.locator('option').allTextContents(), ['System', 'Light', 'Dark']);
+  assert.equal(await theme.inputValue(), 'system');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await appearance('light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await appearance('dark');
+  await theme.selectOption('light');
+  await appearance('light');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await theme.selectOption('dark');
+  await appearance('dark');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await appearance('dark');
+  await page.reload();
+  await loginScreen();
+  assert.equal(await theme.inputValue(), 'dark');
+  await appearance('dark');
+  await theme.selectOption('system');
+  await appearance('light');
+  console.log('Theme: selector, System live changes, explicit overrides and reload persistence passed.');
+
+  const themeKey = 'text-companion-theme';
+  const tab = await page.context().newPage();
+  await tab.emulateMedia({ colorScheme: 'dark' });
+  await tab.goto(process.env.APP_URL || 'http://127.0.0.1:5173');
+  await tab.getByRole('combobox', { name: 'Theme', exact: true }).waitFor();
+  await theme.selectOption('light');
+  await tab.waitForFunction(() => document.querySelector('#theme').value === 'light');
+  assert.equal(await tab.locator('html').evaluate(el => getComputedStyle(el).colorScheme), 'light');
+  await tab.evaluate(key => localStorage.removeItem(key), themeKey);
+  await page.waitForFunction(() => document.querySelector('#theme').value === 'system');
+  await appearance('light');
+  await theme.selectOption('dark');
+  await tab.evaluate(key => localStorage.setItem(key, 'invalid-theme'), themeKey);
+  await page.waitForFunction(() => document.querySelector('#theme').value === 'system');
+  await appearance('light');
+  await page.reload();
+  await loginScreen();
+  assert.equal(await theme.inputValue(), 'system');
+  await appearance('light');
+  assert.equal(await page.evaluate(key => localStorage.getItem(key), themeKey), 'invalid-theme', 'Invalid stored preference stays untouched');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await theme.selectOption('dark');
+  await appearance('dark');
+  await tab.waitForFunction(() => document.querySelector('#theme').value === 'dark');
+  await tab.evaluate(() => localStorage.clear());
+  await page.waitForFunction(() => document.querySelector('#theme').value === 'system');
+  await appearance('light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await appearance('dark');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await appearance('light');
+  await tab.close();
+  console.log('Theme: same-origin tabs, removal, clearing and invalid preference fallback passed.');
+
+  // Hold app JS, not the startup script; inspect every styled animation frame before React.
+  for (const [preference, system, expected] of [[null, 'light', 'light'], [null, 'dark', 'dark'], ['dark', 'light', 'dark'], ['light', 'dark', 'light']]) {
+    const startup = await context.newPage();
+    await startup.emulateMedia({ colorScheme: system });
+    await startup.addInitScript(({ key, preference }) => {
+      if (preference === null) localStorage.removeItem(key); else localStorage.setItem(key, preference);
+      window.styledFrames = [];
+      const sample = () => {
+        const style = getComputedStyle(document.documentElement);
+        if (style.fontFamily.startsWith('Georgia')) window.styledFrames.push([style.backgroundColor, style.colorScheme]);
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    }, { key: themeKey, preference });
+    const held = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    await startup.route('**/*', async route => {
+      if (/\/src\/main\.tsx$|\/assets\/.*\.js$/.test(new URL(route.request().url()).pathname)) {
+        held.resolve();
+        await release.promise;
+      }
+      await route.continue();
+    });
+    try {
+      await startup.goto(process.env.APP_URL || 'http://127.0.0.1:5173', { waitUntil: 'commit' });
+      await held.promise;
+      await startup.waitForFunction(() => window.styledFrames.length >= 3, null, { timeout: 3000 });
+      assert.equal(await startup.locator('#root').textContent(), '', 'App JS still held');
+      const frames = await startup.evaluate(() => window.styledFrames);
+      assert.ok(frames.every(([background, scheme]) => background === (expected === 'dark' ? 'rgb(38, 37, 34)' : 'rgb(252, 251, 249)') && scheme === expected), `${preference}/${system}: no wrong-theme styled frame`);
+    } finally {
+      release.resolve();
+      await startup.close();
+    }
+  }
+  await page.evaluate(key => localStorage.removeItem(key), themeKey);
+  await page.reload();
+  await loginScreen();
+  console.log('Theme: pre-React first styled frames respect System and saved opposite-system overrides.');
+
+  for (const operation of ['getItem', 'setItem']) {
+    const blocked = await context.newPage();
+    blocked.on('pageerror', error => errors.push(error.message));
+    await blocked.addInitScript(({ key, operation }) => {
+      localStorage.removeItem(key);
+      localStorage.setItem('text-companion-daily-tasks', 'preserve corrupt domain data');
+      const original = Storage.prototype[operation];
+      Storage.prototype[operation] = function (name, ...args) {
+        if (name === key) throw new DOMException('Storage blocked', 'SecurityError');
+        return original.call(this, name, ...args);
+      };
+    }, { key: themeKey, operation });
+    await blocked.goto(process.env.APP_URL || 'http://127.0.0.1:5173');
+    const control = blocked.getByRole('combobox', { name: 'Theme', exact: true });
+    await control.selectOption('dark');
+    assert.equal(await control.inputValue(), 'dark', 'Storage failure retains in-session selection');
+    assert.equal(await blocked.locator('html').evaluate(el => getComputedStyle(el).colorScheme), 'dark');
+    if (operation === 'setItem') await blocked.getByRole('status').filter({ hasText: 'Theme applies to this tab; browser could not remember it.' }).waitFor();
+    await blocked.getByLabel('Email', { exact: true }).fill('editable@example.com');
+    assert.equal(await blocked.getByLabel('Email', { exact: true }).inputValue(), 'editable@example.com');
+    assert.equal(await blocked.evaluate(() => localStorage.getItem('text-companion-daily-tasks')), 'preserve corrupt domain data');
+    await blocked.close();
+  }
+  await page.evaluate(() => localStorage.removeItem('text-companion-daily-tasks'));
+  await page.reload();
+  await loginScreen();
+  console.log('Theme: denied reads and failed writes keep UI usable, report failure and preserve unrelated data.');
   await page.getByLabel('Email', { exact: true }).fill(users[0].email);
   await page.getByLabel('Password', { exact: true }).fill('wrong-password');
   await page.getByRole('button', { name: '[Log in]', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'Invalid login credentials' }).waitFor();
+  for (const value of ['light', 'dark']) {
+    await theme.selectOption(value);
+    await theme.focus();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await theme.evaluate(el => el === document.activeElement && el.matches(':focus-visible')), true);
+    const hiddenFocus = await page.addStyleTag({ content: '#theme:focus-visible { outline: none !important; }' });
+    try {
+      await assert.rejects(() => contrast(), error => error.code === 'ERR_ASSERTION' && error.actual.includes('focus: SELECT'), 'Missing keyboard focus outline must fail contrast check');
+    } finally {
+      await hiddenFocus.evaluate(el => el.remove());
+    }
+    await contrast();
+    await screenshot(`auth-${value}`);
+  }
   assert.equal(await page.locator('.sidebar').count(), 0);
   assert.equal(mock.loads.length, 0);
   await page.getByRole('button', { name: '[Create account]', exact: true }).click();
@@ -170,6 +369,50 @@ try {
   assert.equal(await page.getByRole('checkbox', { name: 'Bob private habit', exact: true }).count(), 0);
   await noteDate.fill('2024-02-29');
   assert.equal(await note.inputValue(), 'Alice private note');
+  const dataBeforeTheme = structuredClone([...rows]);
+  const writesBeforeTheme = mock.writes.length;
+  assert.equal(await theme.inputValue(), 'dark', 'Login retains browser choice');
+  const habitBeforeTheme = await page.getByRole('checkbox', { name: 'Alice private habit', exact: true }).isChecked();
+  const cursorBeforeTheme = await page.locator('#calendar-heading').textContent();
+  for (const value of ['light', 'dark']) {
+    await theme.selectOption(value);
+    await appearance(value);
+    await theme.focus();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Shift+Tab');
+    await contrast();
+    await screenshot(`workspace-${value}`);
+    assert.equal(await note.inputValue(), 'Alice private note');
+    assert.equal(await noteDate.inputValue(), '2024-02-29');
+    assert.equal(await page.locator('#calendar-heading').textContent(), cursorBeforeTheme);
+    assert.equal(await page.getByRole('checkbox', { name: 'Alice private habit', exact: true }).isChecked(), habitBeforeTheme);
+    await page.locator('button[aria-current="date"]').click();
+    const surface = await panel.evaluate(el => getComputedStyle(el).backgroundColor);
+    assert.equal(surface, value === 'dark' ? 'rgb(38, 37, 34)' : 'rgb(252, 251, 249)', 'Day details inherits theme');
+    await contrast();
+    await screenshot(`details-${value}`);
+    await panel.getByRole('button', { name: '[Close]', exact: true }).click();
+    await page.getByRole('button', { name: 'Week', exact: true }).click();
+    await contrast();
+    await screenshot(`week-${value}`);
+    await page.getByRole('button', { name: 'Month', exact: true }).click();
+    await page.getByRole('button', { name: 'Add item', exact: true }).click();
+    assert.equal(await dialog.evaluate(el => getComputedStyle(el).backgroundColor), surface, 'Add item inherits theme');
+    assert.equal(await dialog.getByLabel('Type', { exact: true }).evaluate(el => getComputedStyle(el).colorScheme), value);
+    assert.equal(await dialog.getByLabel('Date', { exact: true }).evaluate(el => getComputedStyle(el).colorScheme), value);
+    await contrast();
+    await screenshot(`add-${value}`);
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: '[All notes]', exact: true }).click();
+    const allNotes = page.getByRole('dialog', { name: 'All notes', exact: true });
+    assert.equal(await allNotes.evaluate(el => getComputedStyle(el).backgroundColor), surface, 'All notes inherits theme');
+    await allNotes.getByRole('button', { name: /2024-02-29 Alice private note/ }).hover();
+    await contrast();
+    await screenshot(`notes-${value}`);
+    await page.keyboard.press('Escape');
+  }
+  assert.equal(mock.writes.length, writesBeforeTheme, 'Theme changes never trigger domain saves');
+  assert.deepEqual([...rows], dataBeforeTheme, 'Cloud snapshots unchanged by theme');
   const passwordRequests = mock.passwordRequests.length;
   await page.reload();
   await saved();
@@ -181,7 +424,17 @@ try {
     session.expires_at = 1;
     localStorage.setItem(key, JSON.stringify(session));
   }, sessionKey);
+  const restore = Promise.withResolvers();
+  mock.refreshGate = restore.promise;
   await page.reload();
+  await status('Restoring your session…').waitFor();
+  assert.equal(await theme.isEnabled(), true);
+  await theme.selectOption('light');
+  await appearance('light');
+  await theme.selectOption('dark');
+  await contrast();
+  restore.resolve();
+  mock.refreshGate = null;
   await saved();
   assert.equal(mock.refreshes, 1, 'Expired persisted session must use refresh-token route');
   assert.equal(mock.passwordRequests.length, passwordRequests);
@@ -191,6 +444,7 @@ try {
   await loginScreen();
   assert.equal(mock.loads.length, loadsBeforeLogoutReload);
   await login(users[1]);
+  assert.equal(await theme.inputValue(), 'dark', 'Logout and account switch retain browser choice');
   await page.getByRole('checkbox', { name: 'Bob cloud task', exact: true }).waitFor();
   assert.equal(await page.getByRole('checkbox', { name: 'Alice cloud task', exact: true }).count(), 0);
   await page.getByRole('checkbox', { name: 'Bob private habit', exact: true }).waitFor();
@@ -302,6 +556,12 @@ try {
   await note.fill('Rapid note 1');
   await entered.promise;
   await status('Saving…').waitFor();
+  const themeWrites = mock.writes.length;
+  await theme.selectOption('light');
+  await contrast();
+  await theme.selectOption('dark');
+  assert.equal(await note.inputValue(), 'Rapid note 1', 'Changing theme preserves pending DailyNote');
+  assert.equal(mock.writes.length, themeWrites, 'Changing theme never enqueues domain saves');
   await note.fill('Rapid note 2');
   await note.fill('Rapid note 3');
   assert.equal(mock.writes.length, rapidStart + 1, 'Only first write may run while its acknowledgement is held');
@@ -320,6 +580,7 @@ try {
   await note.fill('Unsaved note must survive');
   await page.getByRole('alert').filter({ hasText: 'Cloud unavailable' }).waitFor();
   await status('Not saved').waitFor();
+  for (const value of ['light', 'dark']) { await theme.selectOption(value); await contrast(); }
   const remainingTask = page.getByRole('checkbox', { name: 'Browser task', exact: true });
   await remainingTask.check();
   assert.equal(await remainingTask.isChecked(), true, 'Failed RPC must retain optimistic changes');
@@ -423,6 +684,13 @@ try {
   await sessionAlert.waitFor();
   assert.equal(await note.inputValue(), 'Draft kept after external logout');
   assert.equal(await note.isDisabled(), true);
+  for (const value of ['light', 'dark']) {
+    assert.equal(await theme.isEnabled(), true, 'Theme stays outside disabled workspace');
+    await theme.selectOption(value);
+    await appearance(value);
+    await contrast();
+    assert.equal(await note.inputValue(), 'Draft kept after external logout');
+  }
   assert.equal(await page.getByRole('button', { name: '[Retry save]', exact: true }).isDisabled(), true);
   const externalBackup = await exportChanges(sessionAlert);
   assert.equal(externalBackup.notes[externalDate], 'Draft kept after external logout');
@@ -447,6 +715,7 @@ try {
   assert.deepEqual(errors, []);
   if (process.env.SCREENSHOT_PATH) await page.screenshot({ path: process.env.SCREENSHOT_PATH, fullPage: true });
   console.log('Browser: mocked auth/session refresh/logout, per-user cloud data, calendar/modal/habits/midnight, serialized autosave, RPC retry/lost-ack idempotence, conflict/export and external logout guards passed.');
+  }
 } finally {
   await browser.close();
 }

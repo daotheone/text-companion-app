@@ -24,8 +24,6 @@
   --line: #57534b;
   --soft: #38352f;
 }
-.theme-control { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; font: .8rem ui-monospace, SFMono-Regular, Consolas, monospace; }
-.theme-control > p { grid-column: 1 / -1; }
 * { box-sizing: border-box; }
 body { margin: 0; line-height: 1.6; }
 button, input, textarea, select { font: inherit; color: inherit; }
@@ -47,8 +45,11 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .skip-link:focus { top: 12px; }
 .app-shell { display: grid; grid-template-columns: 320px minmax(650px, 1fr); height: 100dvh; min-height: 600px; }
 .sidebar { display: flex; flex-direction: column; gap: 24px; border-right: 1px solid var(--line); padding: 30px 24px; overflow-y: auto; }
+.brand { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 12px; }
 .brand h1 { font-size: 1.35rem; letter-spacing: -.025em; }
-.brand p { color: var(--muted); font-size: .82rem; margin-top: 4px; }
+.brand p { grid-column: 1 / -1; color: var(--muted); font-size: .82rem; margin-top: 4px; }
+.theme-button { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; padding: 0; border: 1px solid var(--line); border-radius: 0; }
+.theme-button:active { background: var(--line); }
 .auth-screen { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
 .auth-panel { width: min(100%, 380px); display: flex; flex-direction: column; gap: 20px; }
 .auth-panel fieldset { display: flex; flex-direction: column; gap: 12px; }

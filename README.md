@@ -32,7 +32,7 @@ A new account with no cloud row offers `[Import browser data]`. Confirm only for
 
 ## Interface and accessibility
 
-Theme offers System (default), Light (warm off-white), and Dark (soft warm charcoal), remembering this browser's choice across tabs independently of accounts and cloud data. No icons, heavy shadows, rounded-card clutter, flashy motion, or complex menus. Sidebar scrolls as a whole; detail panel and all-notes list scroll internally. Note editor fills available sidebar space without trapping section scrolling.
+A square theme icon beside the app name cycles System (default), Light (warm off-white), and Dark (soft warm charcoal), remembering this browser's choice across tabs independently of accounts and cloud data. Its tooltip and accessible label describe the current theme and next choice. No heavy shadows, rounded-card clutter, flashy motion, or complex menus. Sidebar scrolls as a whole; detail panel and all-notes list scroll internally. Note editor fills available sidebar space without trapping section scrolling.
 
 Use labeled native controls, keyboard-operable day buttons and collapse headers, visible focus, and descriptive previous/next labels. Modal dialogs have an accessible name, initial focus, focus containment, Escape/Close dismissal, and focus restoration to the opener. Respect reduced-motion preferences for panel transitions.
 

@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { configurationError, supabase } from '../data/supabase';
 import App from '../App';
-import ThemeSelect from './ThemeSelect';
+import ThemeButton from './ThemeButton';
 
 export default function Auth() {
   const [session, setSession] = useState<Session | null>(null);
@@ -54,8 +54,7 @@ export default function Auth() {
   if (workspace) return <App key={workspace.user.id} userId={workspace.user.id} email={workspace.user.email ?? ''}
     authenticated={session?.user.id === workspace.user.id} onLeave={signedOut => setWorkspace(signedOut ? null : session)} />;
   return <main className="auth-screen"><section className="auth-panel" aria-label="Account">
-    <header className="brand"><h1>text companion</h1><p>A little room for your day.</p></header>
-    <ThemeSelect />
+    <header className="brand"><h1>text companion</h1><ThemeButton /><p>A little room for your day.</p></header>
     {configurationError ? <div role="alert" className="storage-error">{configurationError}</div>
       : loading ? <p role="status">Restoring your session…</p>
         : <><h2 id="auth-title">{mode === 'login' ? 'Log in' : 'Create account'}</h2><p className="muted">Keep your habits, tasks, and notes with you.</p>

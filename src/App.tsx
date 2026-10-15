@@ -6,7 +6,7 @@ import { CloudWriter, loadCloud, saveCloud } from './data/cloud';
 import { supabase } from './data/supabase';
 import { formatDate, getMonthGrid, getWeekGrid, parseDate } from './utils/calendar';
 import Modal from './components/Modal';
-import ThemeSelect from './components/ThemeSelect';
+import ThemeButton from './components/ThemeButton';
 
 const GREETINGS = ['Hello', 'Hi there', 'Good to see you', 'Welcome back'];
 const randomGreeting = () => GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
@@ -243,9 +243,8 @@ export default function App({ userId, email, authenticated, onLeave }: { userId:
   return <div className="app-shell">
     <a className="skip-link" href="#calendar">Skip to calendar</a>
     <aside className="sidebar" aria-label="Daily companion">
-      <header className="brand"><h1>text companion</h1><p>A little room for your day.</p></header>
+      <header className="brand"><h1>text companion</h1><ThemeButton /><p>A little room for your day.</p></header>
       <div className="account"><p className="muted">{email}</p><button disabled={loggingOut || !authenticated} onClick={signOut}>[Log out]</button>{importAvailable && <button disabled={!ready || !authenticated || loggingOut || Boolean(writer.current?.dirty)} onClick={importBrowser}>[Import browser data]</button>}</div>
-      <ThemeSelect />
       {!authenticated && <div className="storage-error" role="alert"><p>Session changed. Your changes remain in this tab. Export them before continuing to log in.</p><button onClick={exportChanges}>[Export changes]</button><button onClick={() => { if ((!writer.current?.dirty && !draft.current.dirty) || window.confirm('Discard unsaved changes in this tab and continue? Export them first if you want to keep them.')) onLeave(); }}>[Continue to log in]</button></div>}
       {!ready && !error && <p role="status">Loading your data…</p>}
       {error && <div className="storage-error" role="alert"><p>{error}</p><button disabled={!authenticated || loggingOut} onClick={() => { if (!ready) setLoadAttempt(value => value + 1); else writer.current?.retry(); }}>{ready ? '[Retry save]' : '[Retry load]'}</button>{ready && <button onClick={exportChanges}>[Export changes]</button>}</div>}
